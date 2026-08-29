@@ -302,11 +302,33 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
 
 // ===== ESTADO DO JOGO =====
 double makitas = 0;
-int ownedUpgrade1 = 0;
 const int MAX_OWNED = 100;
-const int baseCostUpgrade1 = 10;
-const float growthUpgrade1 = 1.10;
-const float mpsUpgrade1 = 0.1;
+const int NUM_UPGRADES = 13;
+
+struct UpgradeConfig {
+  const char* id;
+  int baseCost;
+  float growth;
+  float mps;
+};
+
+const UpgradeConfig UPGRADE_CONFIGS[NUM_UPGRADES] = {
+  { "upgrade1",    10,        1.10, 0.1 },  // +0.1 mps
+  { "upgrade_1mps",   100,       1.12, 1.0 },  // +1 mps
+  { "upgrade_2mps",   250,       1.12, 2.0 },  // +2 mps
+  { "upgrade_5mps",   750,       1.13, 5.0 },  // +5 mps
+  { "upgrade_10mps",  1800,      1.13, 10.0 }, // +10 mps
+  { "upgrade_15mps",  3500,      1.14, 15.0 }, // +15 mps
+  { "upgrade_20mps",  6000,      1.14, 20.0 }, // +20 mps
+  { "upgrade_25mps",  10000,     1.14, 25.0 }, // +25 mps
+  { "upgrade_30mps",  16000,     1.15, 30.0 }, // +30 mps
+  { "upgrade_50mps",  35000,     1.15, 50.0 }, // +50 mps
+  { "upgrade_100mps", 100000,    1.15, 100.0 },// +100 mps
+  { "upgrade_200mps", 300000,    1.16, 200.0 },// +200 mps
+  { "upgrade_500mps", 1000000,   1.16, 500.0 } // +500 mps
+};
+
+int ownedUpgrades[NUM_UPGRADES] = {0};
 
 // Melhorias permanentes ativas
 bool permLubrificante = false;   // +10% MPS global
@@ -315,28 +337,49 @@ bool permMotorBrushless = false; // +100% (2x) ganho base das oficinas
 bool permEmpunhadura = false;    // clique manual gera +5% do MPS atual
 bool permBateriaLitio = false;   // +25% MPS global
 bool permIaMaker = false;        // +50% MPS global
+bool permRefrigeracao = false;   // +20% MPS global
+bool permTitanio = false;        // +3.0 poder de clique
+bool permOverclock = false;      // Dobra a sinergia de clique (+10% do MPS)
+bool permNanobots = false;       // +75% MPS global
+bool permSingularidade = false;  // +150% MPS global e triplica o clique base
 
 unsigned long lastTick = 0;
 unsigned long lastBroadcast = 0;
 
-int unitCost(int count) {
-  return ceil(baseCostUpgrade1 * pow(growthUpgrade1, count));
+int getUpgradeIndex(const String &id) {
+  for (int i = 0; i < NUM_UPGRADES; i++) {
+    if (id == UPGRADE_CONFIGS[i].id) return i;
+  }
+  return -1;
+}
+
+int unitCost(int index, int count) {
+  if (index < 0 || index >= NUM_UPGRADES) return 99999999;
+  return ceil(UPGRADE_CONFIGS[index].baseCost * pow(UPGRADE_CONFIGS[index].growth, count));
 }
 
 float getClickPower() {
   float power = 1.0;
   if (permDiscoDiamante) power += 1.0;
+  if (permTitanio) power += 3.0;
+  if (permSingularidade) power *= 3.0;
   return power;
 }
 
 float getTotalMps() {
-  float baseMps = ownedUpgrade1 * mpsUpgrade1;
+  float baseMps = 0.0;
+  for (int i = 0; i < NUM_UPGRADES; i++) {
+    baseMps += (ownedUpgrades[i] * UPGRADE_CONFIGS[i].mps);
+  }
   if (permMotorBrushless) baseMps *= 2.0; // Dobra o ganho base das oficinas
   
   float multiplier = 1.0;
   if (permLubrificante) multiplier += 0.10;
+  if (permRefrigeracao) multiplier += 0.20;
   if (permBateriaLitio) multiplier += 0.25;
   if (permIaMaker) multiplier += 0.50;
+  if (permNanobots) multiplier += 0.75;
+  if (permSingularidade) multiplier += 1.50;
 
   return baseMps * multiplier;
 }
@@ -347,14 +390,24 @@ String getGameStateJSON() {
   json += "\"makitas\":" + String(makitas, 1) + ",";
   json += "\"mps\":" + String(getTotalMps(), 1) + ",";
   json += "\"clickPower\":" + String(getClickPower(), 1) + ",";
-  json += "\"owned\":{\"upgrade1\":" + String(ownedUpgrade1) + "},";
+  json += "\"owned\":{";
+  for (int i = 0; i < NUM_UPGRADES; i++) {
+    json += "\"" + String(UPGRADE_CONFIGS[i].id) + "\":" + String(ownedUpgrades[i]);
+    if (i < NUM_UPGRADES - 1) json += ",";
+  }
+  json += "},";
   json += "\"perms\":{";
   json += "\"perm_lubrificante\":" + String(permLubrificante ? "true" : "false") + ",";
   json += "\"perm_disco_diamante\":" + String(permDiscoDiamante ? "true" : "false") + ",";
   json += "\"perm_motor_brushless\":" + String(permMotorBrushless ? "true" : "false") + ",";
   json += "\"perm_empunhadura\":" + String(permEmpunhadura ? "true" : "false") + ",";
   json += "\"perm_bateria_lítio\":" + String(permBateriaLitio ? "true" : "false") + ",";
-  json += "\"perm_ia_maker\":" + String(permIaMaker ? "true" : "false");
+  json += "\"perm_ia_maker\":" + String(permIaMaker ? "true" : "false") + ",";
+  json += "\"perm_refrigeracao\":" + String(permRefrigeracao ? "true" : "false") + ",";
+  json += "\"perm_titanio\":" + String(permTitanio ? "true" : "false") + ",";
+  json += "\"perm_overclock\":" + String(permOverclock ? "true" : "false") + ",";
+  json += "\"perm_nanobots\":" + String(permNanobots ? "true" : "false") + ",";
+  json += "\"perm_singularidade\":" + String(permSingularidade ? "true" : "false");
   json += "}}";
   return json;
 }
@@ -372,24 +425,28 @@ void broadcastState() {
 
 void handleClick() {
   float gain = getClickPower();
-  if (permEmpunhadura) {
+  if (permOverclock) {
+    gain += (getTotalMps() * 0.10);
+  } else if (permEmpunhadura) {
     gain += (getTotalMps() * 0.05);
   }
   makitas += gain;
   broadcastState();
 }
 
-// Processa a compra considerando 1, 10 ou MAX
-void processBuy(String qtyStr) {
-  int remaining = MAX_OWNED - ownedUpgrade1;
+// Processa a compra considerando id, 1, 10 ou MAX
+void processBuy(int index, String qtyStr) {
+  if (index < 0 || index >= NUM_UPGRADES) return;
+
+  int remaining = MAX_OWNED - ownedUpgrades[index];
   if (remaining <= 0) return;
 
   if (qtyStr == "max") {
-    while (ownedUpgrade1 < MAX_OWNED) {
-      int cost = unitCost(ownedUpgrade1);
+    while (ownedUpgrades[index] < MAX_OWNED) {
+      int cost = unitCost(index, ownedUpgrades[index]);
       if (makitas < cost) break;
       makitas -= cost;
-      ownedUpgrade1++;
+      ownedUpgrades[index]++;
     }
   } else {
     int requested = qtyStr.toInt();
@@ -398,12 +455,12 @@ void processBuy(String qtyStr) {
     // Calcula custo total do lote
     int totalCost = 0;
     for (int i = 0; i < toBuy; i++) {
-      totalCost += unitCost(ownedUpgrade1 + i);
+      totalCost += unitCost(index, ownedUpgrades[index] + i);
     }
 
     if (makitas >= totalCost && toBuy > 0) {
       makitas -= totalCost;
-      ownedUpgrade1 += toBuy;
+      ownedUpgrades[index] += toBuy;
     }
   }
   broadcastState();
@@ -414,19 +471,34 @@ void loadGameState() {
   File f = LittleFS.open("/gamestate.json", "r");
   if (!f) return;
 
-  StaticJsonDocument<512> doc;
+  StaticJsonDocument<1024> doc;
   DeserializationError err = deserializeJson(doc, f);
   f.close();
 
   if (!err) {
     makitas = doc["makitas"] | 0.0;
-    ownedUpgrade1 = doc["ownedUpgrade1"] | 0;
+    
+    JsonObject ownedObj = doc["owned"];
+    if (!ownedObj.isNull()) {
+      for (int i = 0; i < NUM_UPGRADES; i++) {
+        ownedUpgrades[i] = ownedObj[UPGRADE_CONFIGS[i].id] | 0;
+      }
+    } else {
+      // Compatibilidade retroativa com chave antiga
+      ownedUpgrades[0] = doc["ownedUpgrade1"] | 0;
+    }
+
     permLubrificante = doc["permLubrificante"] | false;
     permDiscoDiamante = doc["permDiscoDiamante"] | false;
     permMotorBrushless = doc["permMotorBrushless"] | false;
     permEmpunhadura = doc["permEmpunhadura"] | false;
     permBateriaLitio = doc["permBateriaLitio"] | false;
     permIaMaker = doc["permIaMaker"] | false;
+    permRefrigeracao = doc["permRefrigeracao"] | false;
+    permTitanio = doc["permTitanio"] | false;
+    permOverclock = doc["permOverclock"] | false;
+    permNanobots = doc["permNanobots"] | false;
+    permSingularidade = doc["permSingularidade"] | false;
   }
 }
 
@@ -434,15 +506,25 @@ void saveGameState() {
   File f = LittleFS.open("/gamestate.json", "w");
   if (!f) return;
 
-  StaticJsonDocument<512> doc;
+  StaticJsonDocument<1024> doc;
   doc["makitas"] = makitas;
-  doc["ownedUpgrade1"] = ownedUpgrade1;
+  
+  JsonObject ownedObj = doc.createNestedObject("owned");
+  for (int i = 0; i < NUM_UPGRADES; i++) {
+    ownedObj[UPGRADE_CONFIGS[i].id] = ownedUpgrades[i];
+  }
+
   doc["permLubrificante"] = permLubrificante;
   doc["permDiscoDiamante"] = permDiscoDiamante;
   doc["permMotorBrushless"] = permMotorBrushless;
   doc["permEmpunhadura"] = permEmpunhadura;
   doc["permBateriaLitio"] = permBateriaLitio;
   doc["permIaMaker"] = permIaMaker;
+  doc["permRefrigeracao"] = permRefrigeracao;
+  doc["permTitanio"] = permTitanio;
+  doc["permOverclock"] = permOverclock;
+  doc["permNanobots"] = permNanobots;
+  doc["permSingularidade"] = permSingularidade;
 
   serializeJson(doc, f);
   f.close();
@@ -450,13 +532,20 @@ void saveGameState() {
 
 void resetGameState() {
   makitas = 0.0;
-  ownedUpgrade1 = 0;
+  for (int i = 0; i < NUM_UPGRADES; i++) {
+    ownedUpgrades[i] = 0;
+  }
   permLubrificante = false;
   permDiscoDiamante = false;
   permMotorBrushless = false;
   permEmpunhadura = false;
   permBateriaLitio = false;
   permIaMaker = false;
+  permRefrigeracao = false;
+  permTitanio = false;
+  permOverclock = false;
+  permNanobots = false;
+  permSingularidade = false;
   
   if (LittleFS.exists("/gamestate.json")) {
     LittleFS.remove("/gamestate.json");
@@ -481,6 +570,16 @@ void processPermBuy(String permId, int cost) {
     permBateriaLitio = true; bought = true;
   } else if (permId == "perm_ia_maker" && !permIaMaker && permBateriaLitio) {
     permIaMaker = true; bought = true;
+  } else if (permId == "perm_refrigeracao" && !permRefrigeracao && permMotorBrushless) {
+    permRefrigeracao = true; bought = true;
+  } else if (permId == "perm_titanio" && !permTitanio && permDiscoDiamante) {
+    permTitanio = true; bought = true;
+  } else if (permId == "perm_overclock" && !permOverclock && permEmpunhadura && permRefrigeracao) {
+    permOverclock = true; bought = true;
+  } else if (permId == "perm_nanobots" && !permNanobots && permIaMaker) {
+    permNanobots = true; bought = true;
+  } else if (permId == "perm_singularidade" && !permSingularidade && permNanobots && permOverclock) {
+    permSingularidade = true; bought = true;
   }
 
   if (bought) {
@@ -501,10 +600,18 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
       handleClick();
     } else if (msg == "RESET") {
       resetGameState();
-    } else if (msg.startsWith("BUY:upgrade1:")) {
-      String qtyStr = msg.substring(13);
-      processBuy(qtyStr);
-      saveGameState();
+    } else if (msg.startsWith("BUY:")) {
+      // Formato: BUY:<id>:<qty>
+      int firstSep = msg.indexOf(':', 4);
+      if (firstSep != -1) {
+        String upId = msg.substring(4, firstSep);
+        String qtyStr = msg.substring(firstSep + 1);
+        int upIndex = getUpgradeIndex(upId);
+        if (upIndex != -1) {
+          processBuy(upIndex, qtyStr);
+          saveGameState();
+        }
+      }
     } else if (msg.startsWith("PERM_BUY:")) {
       // Formato: PERM_BUY:<id>:<custo>
       int firstSep = msg.indexOf(':', 9);

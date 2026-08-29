@@ -46,8 +46,13 @@ As melhorias permanentes fornecem **multiplicadores e bônus diretos** tanto na 
 | `perm_disco_diamante` | Disco Diamantado Reforçado | 💠 | 100 | 50 | `perm_lubrificante` | **+1.0 Poder de Clique** (Clique base passa de 1 para 2) |
 | `perm_motor_brushless` | Motor Brushless Industrial | ⚡ | 300 | 150 | `perm_lubrificante` | **2x Produção Base** de todas as oficinas/upgrades |
 | `perm_empunhadura` | Empunhadura Ergonômica Pro | 🧤 | 600 | 250 | `perm_disco_diamante` | **Clique Sinergético**: Cada clique gera +5% do MPS atual |
-| `perm_bateria_lítio` | Bateria Makita 40V Max XGT | 🔋 | 1500 | 600 | `perm_motor_brushless` | **+25% MPS Global** permanente |
-| `perm_ia_maker` | MakerBot Autônomo com IA | 🤖 | 5000 | 2000 | `perm_bateria_lítio` | **+50% MPS Global** permanente |
+| `perm_bateria_lítio` | Bateria Makita 40V Max XGT | 🔋 | 1.500 | 600 | `perm_motor_brushless` | **+25% MPS Global** permanente |
+| `perm_ia_maker` | MakerBot Autônomo com IA | 🤖 | 5.000 | 2.000 | `perm_bateria_lítio` | **+50% MPS Global** permanente |
+| `perm_refrigeracao` | Sistema Criogênico de Nitrogênio | ❄️ | 15.000 | 6.000 | `perm_motor_brushless` | **+20% MPS Global** permanente |
+| `perm_titanio` | Lâmina de Titânio a Plasma | 🗡️ | 35.000 | 12.000 | `perm_disco_diamante` | **+3.0 Poder de Clique** manual |
+| `perm_overclock` | Circuito de Overclock Extremo | ⚡ | 100.000 | 30.000 | `perm_empunhadura` | **Sinergia Dobrada**: Cada clique gera **+10% do MPS** |
+| `perm_nanobots` | Enxame de Nanobots Montadores | 🔬 | 250.000 | 80.000 | `perm_ia_maker` | **+75% MPS Global** permanente |
+| `perm_singularidade` | Núcleo de Singularidade Maker | 🌌 | 1.000.000 | 300.000 | `perm_nanobots` | **+150% MPS Global** e triplica o clique base |
 
 ---
 
@@ -55,9 +60,26 @@ As melhorias permanentes fornecem **multiplicadores e bônus diretos** tanto na 
 
 - **Fórmula de Custo por Unidade:**
   $$\text{Custo}(n) = \lceil \text{baseCost} \times \text{growth}^n \rceil$$
-  *(com $\text{baseCost} = 10$ e $\text{growth} = 1.10$)*
 - **Teto Máximo:** 100 unidades por tipo de oficina (`MAX_OWNED = 100`).
 - **Modos de Compra:** `1x`, `10x`, `MAX` (calcula o lote máximo acessível com o saldo atual sem ultrapassar 100).
+
+### Tabela Completa de Upgrades da Loja:
+
+| ID | Nome | Ícone | Custo Base | Growth | Produção (MPS) |
+|---|---|:---:|---|---|---|
+| `upgrade1` | Bancada Básica | ⚙️ | 10 | 1.10 | +0.1 MPS |
+| `upgrade_1mps` | Esmerilhadeira Manual | 🪚 | 100 | 1.12 | +1.0 MPS |
+| `upgrade_2mps` | Serra Mármore 1400W | ⚡ | 250 | 1.12 | +2.0 MPS |
+| `upgrade_5mps` | Torno Mecânico | 🔧 | 750 | 1.13 | +5.0 MPS |
+| `upgrade_10mps` | Fresadora CNC | 🎛️ | 1.800 | 1.13 | +10.0 MPS |
+| `upgrade_15mps` | Robô de Solda Industrial | 🦾 | 3.500 | 1.14 | +15.0 MPS |
+| `upgrade_20mps` | Cortadora a Laser CO2 | 🔴 | 6.000 | 1.14 | +20.0 MPS |
+| `upgrade_25mps` | Prensa Hidráulica 50T | 🏗️ | 10.000 | 1.14 | +25.0 MPS |
+| `upgrade_30mps` | Impressora 3D de Metal | 🖨️ | 16.000 | 1.15 | +30.0 MPS |
+| `upgrade_50mps` | Linha de Montagem IA | 🤖 | 35.000 | 1.15 | +50.0 MPS |
+| `upgrade_100mps` | Mega Fábrica Makita | 🏭 | 100.000 | 1.15 | +100.0 MPS |
+| `upgrade_200mps` | Reator de Fusão Maker | ☢️ | 300.000 | 1.16 | +200.0 MPS |
+| `upgrade_500mps` | Estação Espacial Orbital | 🛸 | 1.000.000 | 1.16 | +500.0 MPS |
 
 ---
 

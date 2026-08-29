@@ -459,6 +459,7 @@
             border-left: 1px solid var(--panel-edge);
             display: flex;
             flex-direction: column;
+            overflow: hidden;
         }
 
         .shop-head {
@@ -534,6 +535,8 @@
             display: flex;
             flex-direction: column;
             gap: .55rem;
+            flex: 1;
+            overflow-y: auto;
         }
 
         .shop-item {
@@ -796,14 +799,24 @@
         const permBrush = permanentUpgrades.find(u => u.id === 'perm_motor_brushless')?.purchased;
         const permBat = permanentUpgrades.find(u => u.id === 'perm_bateria_lítio')?.purchased;
         const permIa = permanentUpgrades.find(u => u.id === 'perm_ia_maker')?.purchased;
+        const permRefrig = permanentUpgrades.find(u => u.id === 'perm_refrigeracao')?.purchased;
+        const permNano = permanentUpgrades.find(u => u.id === 'perm_nanobots')?.purchased;
+        const permSing = permanentUpgrades.find(u => u.id === 'perm_singularidade')?.purchased;
 
-        let baseMps = (owned['upgrade1'] || 0) * 0.1;
+        let baseMps = 0.0;
+        upgrades.forEach(u => {
+            baseMps += (owned[u.id] || 0) * u.mps;
+        });
+
         if (permBrush) baseMps *= 2.0;
 
         let mult = 1.0;
         if (permLub) mult += 0.10;
+        if (permRefrig) mult += 0.20;
         if (permBat) mult += 0.25;
         if (permIa) mult += 0.50;
+        if (permNano) mult += 0.75;
+        if (permSing) mult += 1.50;
 
         return baseMps * mult;
     }
@@ -812,6 +825,12 @@
         let power = 1.0;
         if (permanentUpgrades.find(u => u.id === 'perm_disco_diamante')?.purchased) {
             power += 1.0;
+        }
+        if (permanentUpgrades.find(u => u.id === 'perm_titanio')?.purchased) {
+            power += 3.0;
+        }
+        if (permanentUpgrades.find(u => u.id === 'perm_singularidade')?.purchased) {
+            power *= 3.0;
         }
         return power;
     }
@@ -870,7 +889,19 @@
 
     // ---------- upgrades da loja ----------
     const upgrades = [
-        { id: 'upgrade1', name: 'Upgrade 1', icon: '⚙️', baseCost: 10, growth: 1.10, mps: 0.1 },
+        { id: 'upgrade1',       name: 'Bancada Básica',         icon: '⚙️', baseCost: 10,      growth: 1.10, mps: 0.1 },
+        { id: 'upgrade_1mps',   name: 'Esmerilhadeira Manual',   icon: '🪚', baseCost: 100,     growth: 1.12, mps: 1.0 },
+        { id: 'upgrade_2mps',   name: 'Serra Mármore 1400W',    icon: '⚡', baseCost: 250,     growth: 1.12, mps: 2.0 },
+        { id: 'upgrade_5mps',   name: 'Torno Mecânico',         icon: '🔧', baseCost: 750,     growth: 1.13, mps: 5.0 },
+        { id: 'upgrade_10mps',  name: 'Fresadora CNC',          icon: '🎛️', baseCost: 1800,    growth: 1.13, mps: 10.0 },
+        { id: 'upgrade_15mps',  name: 'Robô de Solda Industrial',icon: '🦾', baseCost: 3500,    growth: 1.14, mps: 15.0 },
+        { id: 'upgrade_20mps',  name: 'Cortadora a Laser CO2',  icon: '🔴', baseCost: 6000,    growth: 1.14, mps: 20.0 },
+        { id: 'upgrade_25mps',  name: 'Prensa Hidráulica 50T',  icon: '🏗️', baseCost: 10000,   growth: 1.14, mps: 25.0 },
+        { id: 'upgrade_30mps',  name: 'Impressora 3D de Metal', icon: '🖨️', baseCost: 16000,   growth: 1.15, mps: 30.0 },
+        { id: 'upgrade_50mps',  name: 'Linha de Montagem IA',   icon: '🤖', baseCost: 35000,   growth: 1.15, mps: 50.0 },
+        { id: 'upgrade_100mps', name: 'Mega Fábrica Makita',    icon: '🏭', baseCost: 100000,  growth: 1.15, mps: 100.0 },
+        { id: 'upgrade_200mps', name: 'Reator de Fusão Maker',  icon: '☢️', baseCost: 300000,  growth: 1.16, mps: 200.0 },
+        { id: 'upgrade_500mps', name: 'Estação Espacial Orbital',icon: '🛸', baseCost: 1000000, growth: 1.16, mps: 500.0 }
     ];
 
     const owned = {};
@@ -960,6 +991,56 @@
             reqMakitas: 2000,
             reqUpgrade: 'perm_bateria_lítio',
             desc: 'Automação inteligente de fabricação. Aumenta a produção global em +50%.',
+            purchased: false
+        },
+        {
+            id: 'perm_refrigeracao',
+            name: 'Sistema Criogênico de Nitrogênio',
+            icon: '❄️',
+            cost: 15000,
+            reqMakitas: 6000,
+            reqUpgrade: 'perm_motor_brushless',
+            desc: 'Resfriamento ultra rápido. +20% na velocidade global de produção.',
+            purchased: false
+        },
+        {
+            id: 'perm_titanio',
+            name: 'Lâmina de Titânio Forjada a Plasma',
+            icon: '🗡️',
+            cost: 35000,
+            reqMakitas: 12000,
+            reqUpgrade: 'perm_disco_diamante',
+            desc: 'Dureza atômica. Adiciona +3.0 de poder a cada clique manual.',
+            purchased: false
+        },
+        {
+            id: 'perm_overclock',
+            name: 'Circuito de Overclock Extremo',
+            icon: '⚡',
+            cost: 100000,
+            reqMakitas: 30000,
+            reqUpgrade: 'perm_empunhadura',
+            desc: 'Sinergia amplificada: Cliques manuais geram 10% do MPS atual instantaneamente.',
+            purchased: false
+        },
+        {
+            id: 'perm_nanobots',
+            name: 'Enxame de Nanobots Montadores',
+            icon: '🔬',
+            cost: 250000,
+            reqMakitas: 80000,
+            reqUpgrade: 'perm_ia_maker',
+            desc: 'Construção a nível molecular. +75% de bônus em todas as oficinas.',
+            purchased: false
+        },
+        {
+            id: 'perm_singularidade',
+            name: 'Núcleo de Singularidade Maker',
+            icon: '🌌',
+            cost: 1000000,
+            reqMakitas: 300000,
+            reqUpgrade: 'perm_nanobots',
+            desc: 'Dobra e meia (+150%) o MPS total e triplica o poder de clique base.',
             purchased: false
         }
     ];
@@ -1236,11 +1317,16 @@
 
         // Calcula poder de clique com bônus de melhorias permanentes
         let clickPower = (isLocalMode ? calculateLocalClickPower() : serverClickPower) || 1.0;
-        if (permanentUpgrades.find(u => u.id === 'perm_disco_diamante')?.purchased) {
-            clickPower = Math.max(clickPower, 2.0);
+        
+        let synergyPct = 0;
+        if (permanentUpgrades.find(u => u.id === 'perm_overclock')?.purchased) {
+            synergyPct = 0.10;
+        } else if (permanentUpgrades.find(u => u.id === 'perm_empunhadura')?.purchased) {
+            synergyPct = 0.05;
         }
-        if (permanentUpgrades.find(u => u.id === 'perm_empunhadura')?.purchased) {
-            const extra = (mps * 0.05);
+
+        if (synergyPct > 0) {
+            const extra = (mps * synergyPct);
             statClickPowerEl.textContent = `${clickPower.toFixed(1)} (+${extra.toFixed(1)}/s)`;
         } else {
             statClickPowerEl.textContent = clickPower.toFixed(1);
@@ -1330,10 +1416,9 @@
     // feedback visual instantâneo do clique — não mexe em `makitas`/`mps`
     function playClickFeedback() {
         let gain = (isLocalMode ? calculateLocalClickPower() : serverClickPower) || 1.0;
-        if (permanentUpgrades.find(u => u.id === 'perm_disco_diamante')?.purchased) {
-            gain = Math.max(gain, 2.0);
-        }
-        if (permanentUpgrades.find(u => u.id === 'perm_empunhadura')?.purchased) {
+        if (permanentUpgrades.find(u => u.id === 'perm_overclock')?.purchased) {
+            gain += (mps * 0.10);
+        } else if (permanentUpgrades.find(u => u.id === 'perm_empunhadura')?.purchased) {
             gain += (mps * 0.05);
         }
         showFloatPlus(gain);
@@ -1347,7 +1432,9 @@
             socket.send('CLICK');
         } else if (isLocalMode) {
             let gain = calculateLocalClickPower();
-            if (permanentUpgrades.find(u => u.id === 'perm_empunhadura')?.purchased) {
+            if (permanentUpgrades.find(u => u.id === 'perm_overclock')?.purchased) {
+                gain += (mps * 0.10);
+            } else if (permanentUpgrades.find(u => u.id === 'perm_empunhadura')?.purchased) {
                 gain += (mps * 0.05);
             }
             makitas += gain;
