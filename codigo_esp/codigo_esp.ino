@@ -162,6 +162,8 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
   unsigned long dlStart = millis();
 
   while (http.connected() && (written < totalBytes || totalBytes == -1)) {
+    ESP.wdtFeed();
+    yield();
     size_t size = stream->available();
     if (size) {
       int c = stream->readBytes(tempBuf, min(size, sizeof(tempBuf)));
