@@ -15,6 +15,8 @@
 #define CURRENT_FIRMWARE_VER 0
 #define CURRENT_FS_VER       0
 
+#define MEGA_RESET_PIN D5
+
 const char* VERSION_URL = "https://makitaclicker.pages.dev/version.json";
 
 const char* ssid = "MakerSpace UNIFEI";
@@ -26,6 +28,17 @@ WebSocketsServer webSocket = WebSocketsServer(81);
 
 // D6 = RX (Mega 18), D7 = TX (Mega 19)
 SoftwareSerial megaSerial(D6, D7);
+
+// Reinicia o Arduino Mega via pulso LOW em modo Open-Drain seguro
+void resetMega() {
+  Serial.println("[MEGA] Reiniciando Arduino Mega...");
+  pinMode(MEGA_RESET_PIN, OUTPUT);
+  digitalWrite(MEGA_RESET_PIN, LOW);
+  delay(60);
+  pinMode(MEGA_RESET_PIN, INPUT); // Retorna imediatamente para Hi-Z (alta impedancia)
+  delay(100); // Aguarda boot do Mega
+  Serial.println("[MEGA] Reset concluido.");
+}
 
 // ===== ESTADO DO JOGO =====
 double makitas = 0;
@@ -305,6 +318,9 @@ void setup() {
   Serial.begin(115200);
   megaSerial.begin(9600);
 
+  // Inicializa o pino de reset do Mega em modo Open-Drain (alta impedancia)
+  pinMode(MEGA_RESET_PIN, INPUT);
+
   if (!LittleFS.begin()) {
     Serial.println("Erro LittleFS");
     return;
@@ -321,6 +337,9 @@ void setup() {
 
   // Checa e aplica OTA antes de subir os serviços
   checkOTA();
+
+  // Reinicia o Arduino Mega para sincronizar inicializacao e LCD
+  resetMega();
 
   if (MDNS.begin(hostName)) {
     MDNS.addService("http", "tcp", 80);
