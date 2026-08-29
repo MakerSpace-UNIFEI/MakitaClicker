@@ -10,9 +10,10 @@
 #include <ESP8266httpUpdate.h>
 #include <ArduinoJson.h>
 
-// ===== VERSÃO LOCAL (atualizar a cada release) =====
-#define CURRENT_FIRMWARE_VER 2
-#define CURRENT_FS_VER       3
+// ===== VERSÃO LOCAL — gerenciado automaticamente pelo build.sh =====
+// NÃO edite manualmente. O Cloudflare Pages injeta o valor correto antes de compilar.
+#define CURRENT_FIRMWARE_VER 0
+#define CURRENT_FS_VER       0
 
 const char* VERSION_URL = "https://makitaclicker.pages.dev/version.json";
 

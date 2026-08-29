@@ -1,6 +1,22 @@
 #!/usr/bin/env bash
 set -e
 
+# =============================================================
+# VERSIONAMENTO AUTOMÁTICO
+# Usa o número total de commits como versão — cresce a cada push
+# O mesmo número é gravado no firmware compilado E no version.json
+# garantindo que após OTA o ESP nunca entre em loop de update.
+# =============================================================
+VERSION=$(git rev-list --count HEAD)
+echo "=== Versão deste build: $VERSION ==="
+
+# Patcha os #define no .ino ANTES de compilar
+sed -i "s/#define CURRENT_FIRMWARE_VER .*/#define CURRENT_FIRMWARE_VER $VERSION/" codigo_esp/codigo_esp.ino
+sed -i "s/#define CURRENT_FS_VER .*/#define CURRENT_FS_VER       $VERSION/" codigo_esp/codigo_esp.ino
+
+echo "[VERSION] codigo_esp.ino patchado:"
+grep "CURRENT_.*_VER" codigo_esp/codigo_esp.ino
+
 echo "=== [1/5] Instalando arduino-cli ==="
 curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | BINDIR=. sh
 export PATH=$PATH:.
@@ -42,5 +58,18 @@ else
     -name "mklittlefs*" 2>/dev/null || true
   exit 1
 fi
+
+# Gera o version.json com a mesma versão gravada no firmware
+cat > ./online/version.json << VERSIONJSON
+{
+  "firmware_version": $VERSION,
+  "fs_version": $VERSION,
+  "firmware_url": "https://makitaclicker.pages.dev/firmware.bin",
+  "fs_url": "https://makitaclicker.pages.dev/littlefs.bin"
+}
+VERSIONJSON
+
+echo "[VERSION] version.json gerado:"
+cat ./online/version.json
 
 echo "=== Pipeline concluido com sucesso ==="
