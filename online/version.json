@@ -1,0 +1,6 @@
+{
+  "firmware_version": 1,
+  "fs_version": 1,
+  "firmware_url": "https://makitaclicker.pages.dev/firmware.bin",
+  "fs_url": "https://makitaclicker.pages.dev/littlefs.bin"
+}

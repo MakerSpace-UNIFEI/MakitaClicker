@@ -5,6 +5,16 @@
 #include <WebSocketsServer.h>
 #include <SoftwareSerial.h>
 #include <math.h>
+#include <WiFiClientSecure.h>
+#include <ESP8266HTTPClient.h>
+#include <ESP8266httpUpdate.h>
+#include <ArduinoJson.h>
+
+// ===== VERSÃO LOCAL (atualizar a cada release) =====
+#define CURRENT_FIRMWARE_VER 1
+#define CURRENT_FS_VER       1
+
+const char* VERSION_URL = "https://makitaclicker.pages.dev/version.json";
 
 const char* ssid = "MakerSpace UNIFEI";
 const char* password = "makerspace@23";
@@ -103,6 +113,61 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
   }
 }
 
+void checkOTA() {
+  Serial.println("[OTA] Verificando atualizacoes...");
+
+  WiFiClientSecure client;
+  client.setInsecure(); // sem verificação de certificado (RAM limitada no ESP8266)
+
+  HTTPClient http;
+  http.begin(client, VERSION_URL);
+  int httpCode = http.GET();
+
+  if (httpCode != HTTP_CODE_OK) {
+    Serial.printf("[OTA] Falha ao buscar version.json: %d\n", httpCode);
+    http.end();
+    return;
+  }
+
+  String payload = http.getString();
+  http.end();
+
+  StaticJsonDocument<256> doc;
+  DeserializationError err = deserializeJson(doc, payload);
+  if (err) {
+    Serial.printf("[OTA] JSON invalido: %s\n", err.c_str());
+    return;
+  }
+
+  int remoteFwVer = doc["firmware_version"] | 0;
+  int remoteFsVer = doc["fs_version"]       | 0;
+  String fwUrl    = doc["firmware_url"]      | "";
+  String fsUrl    = doc["fs_url"]            | "";
+
+  Serial.printf("[OTA] Local FW=%d FS=%d | Remoto FW=%d FS=%d\n",
+                CURRENT_FIRMWARE_VER, CURRENT_FS_VER, remoteFwVer, remoteFsVer);
+
+  // Atualiza FS primeiro (sem reboot), depois firmware (com reboot)
+  if (remoteFsVer > CURRENT_FS_VER) {
+    Serial.println("[OTA] Atualizando LittleFS...");
+    ESPhttpUpdate.rebootOnUpdate(false);
+    t_httpUpdate_return ret = ESPhttpUpdate.updateFS(client, fsUrl);
+    if (ret == HTTP_UPDATE_OK) {
+      Serial.println("[OTA] LittleFS atualizado com sucesso.");
+    } else {
+      Serial.printf("[OTA] Falha no FS update: %s\n", ESPhttpUpdate.getLastErrorString().c_str());
+    }
+  }
+
+  if (remoteFwVer > CURRENT_FIRMWARE_VER) {
+    Serial.println("[OTA] Atualizando Firmware...");
+    ESPhttpUpdate.rebootOnUpdate(true);
+    t_httpUpdate_return ret = ESPhttpUpdate.update(client, fwUrl);
+    // Se chegou aqui, houve falha (sucesso causa reboot)
+    Serial.printf("[OTA] Falha no FW update: %s\n", ESPhttpUpdate.getLastErrorString().c_str());
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   megaSerial.begin(9600);
@@ -117,6 +182,12 @@ void setup() {
     delay(500);
     Serial.print(".");
   }
+  Serial.println();
+  Serial.print("[WiFi] IP: ");
+  Serial.println(WiFi.localIP());
+
+  // Checa e aplica OTA antes de subir os serviços
+  checkOTA();
 
   if (MDNS.begin(hostName)) {
     MDNS.addService("http", "tcp", 80);
