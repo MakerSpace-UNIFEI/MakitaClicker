@@ -136,9 +136,6 @@ void processBuy(String qtyStr) {
   broadcastState();
 }
 
-void processPermBuy(String permId, int cost) {
-  if (makitas < cost) return;
-
 void loadGameState() {
   if (!LittleFS.exists("/gamestate.json")) return;
   File f = LittleFS.open("/gamestate.json", "r");
