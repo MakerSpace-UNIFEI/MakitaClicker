@@ -191,7 +191,9 @@ void checkOTA() {
   client.setInsecure(); // sem verificação de certificado (RAM limitada no ESP8266)
 
   HTTPClient http;
-  http.begin(client, VERSION_URL);
+  String checkUrl = String(VERSION_URL) + "?t=" + String(millis());
+  http.begin(client, checkUrl);
+  http.addHeader("Cache-Control", "no-cache");
   int httpCode = http.GET();
 
   if (httpCode != HTTP_CODE_OK) {

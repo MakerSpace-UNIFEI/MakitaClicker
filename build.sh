@@ -3,11 +3,17 @@ set -e
 
 # =============================================================
 # VERSIONAMENTO AUTOMÁTICO
-# Usa o número total de commits como versão — cresce a cada push
-# O mesmo número é gravado no firmware compilado E no version.json
-# garantindo que após OTA o ESP nunca entre em loop de update.
+# Unshallow no clone do Cloudflare Pages (que usa --depth=1)
+# para obter o total real de commits ou timestamp
 # =============================================================
-VERSION=$(git rev-list --count HEAD)
+git fetch --unshallow 2>/dev/null || true
+
+VERSION=$(git rev-list --count HEAD 2>/dev/null || echo 0)
+if [ "$VERSION" -le 1 ]; then
+  # Fallback caso não consiga unshallow: timestamp unix do commit
+  VERSION=$(git log -1 --format=%ct 2>/dev/null || date +%s)
+fi
+
 echo "=== Versão deste build: $VERSION ==="
 
 # Patcha os #define no .ino ANTES de compilar
