@@ -114,7 +114,7 @@ bool sendStk500v2(Stream &s, const uint8_t *payload, uint16_t len, uint8_t *resp
 }
 
 bool updateMega(WiFiClientSecure &client, const String &url) {
-  Serial.println("[OTA-MEGA] Baixando e gravando binario do Arduino Mega...");
+  Serial.println("[OTA-MEGA] Baixando binario do Arduino Mega...");
 
   HTTPClient http;
   http.begin(client, url);
@@ -126,8 +126,50 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
   }
 
   int totalBytes = http.getSize();
-  Serial.printf("[OTA-MEGA] Tamanho do binario: %d bytes\n", totalBytes);
+  Serial.printf("[OTA-MEGA] Tamanho: %d bytes\n", totalBytes);
+
+  // Salva no LittleFS temporariamente para eliminar qualquer interferencia do Wi-Fi na Serial
+  File f = LittleFS.open("/mega_temp.bin", "w");
+  if (!f) {
+    Serial.println("[OTA-MEGA] Erro ao abrir LittleFS para salvar temporario.");
+    http.end();
+    return false;
+  }
+
   WiFiClient *stream = http.getStreamPtr();
+  uint8_t tempBuf[512];
+  int written = 0;
+  unsigned long dlStart = millis();
+
+  while (http.connected() && (written < totalBytes || totalBytes == -1)) {
+    size_t size = stream->available();
+    if (size) {
+      int c = stream->readBytes(tempBuf, min(size, sizeof(tempBuf)));
+      f.write(tempBuf, c);
+      written += c;
+      dlStart = millis();
+    }
+    if (written == totalBytes) break;
+    if (millis() - dlStart > 8000) {
+      Serial.println("[OTA-MEGA] Timeout no download HTTP.");
+      f.close();
+      LittleFS.remove("/mega_temp.bin");
+      http.end();
+      return false;
+    }
+    delay(1);
+    yield();
+  }
+  f.close();
+  http.end();
+  Serial.printf("[OTA-MEGA] Download concluido: %d bytes salvos no LittleFS.\n", written);
+
+  // Abre o arquivo local para gravacao estavel via Serial
+  f = LittleFS.open("/mega_temp.bin", "r");
+  if (!f) {
+    Serial.println("[OTA-MEGA] Erro ao reabrir arquivo temporario.");
+    return false;
+  }
 
   // Pulsa o RESET do Mega para ativar o bootloader STK500v2
   pinMode(MEGA_RESET_PIN, OUTPUT);
@@ -159,7 +201,8 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
 
   if (!syncOk) {
     Serial.println("[OTA-MEGA] Erro: Arduino Mega nao respondeu ao STK500v2.");
-    http.end();
+    f.close();
+    LittleFS.remove("/mega_temp.bin");
     return false;
   }
   Serial.println("[OTA-MEGA] Handshake STK500v2 OK!");
@@ -168,39 +211,22 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
   uint8_t enterProg[] = { 0x10, 0xC8, 0x64, 0x19, 0x20, 0xAC, 0x53, 0x00, 0x00 };
   sendStk500v2(megaSerial, enterProg, sizeof(enterProg), resp, respLen, seq, 1000);
 
-  // 3. Grava páginas de 256 bytes (ATmega2560)
+  // 3. Grava páginas de 256 bytes lendo do arquivo local
   const uint16_t PAGE_SIZE = 256;
   uint8_t pageBuffer[PAGE_SIZE];
   uint32_t currentAddr = 0;
   uint8_t progPayload[10 + PAGE_SIZE];
 
-  while (currentAddr < (uint32_t)totalBytes) {
-    uint16_t toRead = min((uint32_t)PAGE_SIZE, (uint32_t)(totalBytes - currentAddr));
-    uint16_t bytesRead = 0;
-    unsigned long readStart = millis();
-
-    while (bytesRead < toRead && millis() - readStart < 5000) {
-      if (stream->available()) {
-        pageBuffer[bytesRead++] = stream->read();
-      } else {
-        delay(1);
-        yield();
-      }
-    }
-
-    if (bytesRead < toRead) {
-      Serial.println("[OTA-MEGA] Erro: Timeout na leitura HTTP.");
-      http.end();
-      return false;
-    }
+  while (currentAddr < (uint32_t)written) {
+    uint16_t toRead = min((uint32_t)PAGE_SIZE, (uint32_t)(written - currentAddr));
+    size_t bytesRead = f.read(pageBuffer, toRead);
 
     while (bytesRead < PAGE_SIZE) {
       pageBuffer[bytesRead++] = 0xFF;
     }
 
-    // Tenta gravar a pagina com ate 3 tentativas (resiliencia a timing)
     bool pageOk = false;
-    for (int retry = 0; retry < 3; retry++) {
+    for (int retry = 0; retry < 5; retry++) {
       // CMD_LOAD_ADDRESS (endereço em words de 16-bit)
       uint32_t wordAddr = currentAddr >> 1;
       uint8_t loadAddrCmd[] = {
@@ -212,7 +238,7 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
       };
 
       if (!sendStk500v2(megaSerial, loadAddrCmd, sizeof(loadAddrCmd), resp, respLen, seq, 1000) || resp[1] != 0x00) {
-        delay(10);
+        delay(15);
         continue;
       }
 
@@ -233,19 +259,20 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
         pageOk = true;
         break;
       }
-      delay(15);
+      delay(20);
     }
 
     if (!pageOk) {
       Serial.printf("[OTA-MEGA] Erro gravando pagina em 0x%X (status 0x%02X)\n", currentAddr, resp[1]);
-      http.end();
+      f.close();
+      LittleFS.remove("/mega_temp.bin");
       return false;
     }
 
     currentAddr += toRead;
-    if ((currentAddr % 1024) == 0 || currentAddr >= (uint32_t)totalBytes) {
+    if ((currentAddr % 1024) == 0 || currentAddr >= (uint32_t)written) {
       Serial.printf("[OTA-MEGA] Progresso: %d / %d bytes (%.0f%%)\n",
-                    currentAddr, totalBytes, (float)currentAddr * 100.0 / totalBytes);
+                    currentAddr, written, (float)currentAddr * 100.0 / written);
     }
     delay(5);
     yield();
@@ -255,6 +282,9 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
   uint8_t leaveProg[] = { 0x11, 0x01, 0x01 };
   sendStk500v2(megaSerial, leaveProg, sizeof(leaveProg), resp, respLen, seq, 1000);
 
+  f.close();
+  LittleFS.remove("/mega_temp.bin");
+
   // Reinicia o Mega para rodar o novo código
   pinMode(MEGA_RESET_PIN, OUTPUT);
   digitalWrite(MEGA_RESET_PIN, LOW);
@@ -262,7 +292,6 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
   digitalWrite(MEGA_RESET_PIN, HIGH);
   pinMode(MEGA_RESET_PIN, INPUT);
 
-  http.end();
   Serial.println("[OTA-MEGA] Arduino Mega regravado com sucesso!");
   return true;
 }
