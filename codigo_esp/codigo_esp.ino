@@ -11,6 +11,25 @@
 #include <ArduinoJson.h>
 #include <EEPROM.h>
 
+const int NUM_UPGRADES = 13;
+
+struct UpgradeConfig {
+  const char* id;
+  int baseCost;
+  float growth;
+  float mps;
+};
+
+#define EEPROM_MAGIC 0x4D4B5432 // "MKT2"
+
+struct EEPROMState {
+  uint32_t magic;
+  double makitas;
+  uint8_t owned[NUM_UPGRADES]; // 13 upgrades
+  uint16_t perms; // bitmask para até 16 perms
+  uint8_t checksum;
+};
+
 // ===== VERSÃO LOCAL — gerenciado automaticamente pelo build.sh =====
 // NÃO edite manualmente. O Cloudflare Pages injeta o valor correto antes de compilar.
 #define CURRENT_FIRMWARE_VER 0
@@ -304,14 +323,6 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
 // ===== ESTADO DO JOGO =====
 double makitas = 0;
 const int MAX_OWNED = 100;
-const int NUM_UPGRADES = 13;
-
-struct UpgradeConfig {
-  const char* id;
-  int baseCost;
-  float growth;
-  float mps;
-};
 
 const UpgradeConfig UPGRADE_CONFIGS[NUM_UPGRADES] = {
   { "upgrade1",    10,        1.10, 0.1 },  // +0.1 mps
@@ -414,7 +425,11 @@ String getGameStateJSON() {
 }
 
 void notifyMega() {
-  String payload = "MAKITA:" + String((long)makitas) + "," + String(getTotalMps(), 1);
+  int totalOwned = 0;
+  for (int i = 0; i < NUM_UPGRADES; i++) {
+    totalOwned += ownedUpgrades[i];
+  }
+  String payload = "MAKITA:" + String((long)makitas) + "," + String(getTotalMps(), 1) + "," + String(getClickPower(), 1) + "," + String(totalOwned);
   megaSerial.println(payload);
 }
 
@@ -466,16 +481,6 @@ void processBuy(int index, String qtyStr) {
   }
   broadcastState();
 }
-
-#define EEPROM_MAGIC 0x4D4B5432 // "MKT2"
-
-struct EEPROMState {
-  uint32_t magic;
-  double makitas;
-  uint8_t owned[NUM_UPGRADES]; // 13 upgrades
-  uint16_t perms; // bitmask para até 16 perms
-  uint8_t checksum;
-};
 
 uint8_t calcChecksum(const EEPROMState &s) {
   const uint8_t *p = (const uint8_t*)&s;
