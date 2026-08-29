@@ -742,74 +742,131 @@
     //     e a quantidade `owned` recebida — então o ESP32 só precisa saber
     //     e devolver "quantas unidades esse jogador já tem" de cada upgrade.
     //
-    // Ajuste o hostname/porta abaixo se o seu servidor no ESP32 usar outro
-    // endereço. Se você abrir este HTML direto do disco (file://) em vez de
-    // servido pelo próprio ESP32, a conexão WebSocket vai falhar — isso é
-    // esperado, só funciona quando a página é servida pelo ESP32 (ou por um
-    // servidor que fale o mesmo protocolo na mesma rede).
-    const socket = new WebSocket('ws://' + window.location.hostname + ':81/');
+    // =====================================================================
+    // COMUNICAÇÃO COM O ESP32 / MODO LOCAL DE TESTES (OFFLINE SIMULATOR)
+    // =====================================================================
+    // Se aberto direto no navegador (file:// ou sem ESP conectado), o jogo
+    // entra automaticamente em "Modo de Teste Local", simulando a lógica
+    // interna do ESP8266 para permitir desenvolvimento e testes instantâneos.
+    
+    let isLocalMode = false;
+    let socket = null;
+
+    function initLocalSimulation() {
+        if (isLocalMode) return;
+        isLocalMode = true;
+        logEl.textContent = '🛠️ Modo de Teste Local Ativo (Simulador do ESP)';
+        logEl.style.color = 'var(--orange)';
+
+        // Carrega estado salvo local para testes
+        const savedState = localStorage.getItem('makita_local_state');
+        if (savedState) {
+            try {
+                const parsed = JSON.parse(savedState);
+                makitas = parsed.makitas || 0;
+                if (parsed.owned) {
+                    Object.assign(owned, parsed.owned);
+                }
+            } catch(e) {}
+        }
+
+        // Loop de produção passiva local (100ms)
+        setInterval(() => {
+            const currentMps = calculateLocalMps();
+            if (currentMps > 0) {
+                const dt = 0.1;
+                const gain = currentMps * dt;
+                makitas += gain;
+                totalMakitasMade += gain;
+                savePermanentProgress();
+                saveLocalState();
+                render();
+            }
+        }, 100);
+    }
+
+    function calculateLocalMps() {
+        const permLub = permanentUpgrades.find(u => u.id === 'perm_lubrificante')?.purchased;
+        const permBrush = permanentUpgrades.find(u => u.id === 'perm_motor_brushless')?.purchased;
+        const permBat = permanentUpgrades.find(u => u.id === 'perm_bateria_lítio')?.purchased;
+        const permIa = permanentUpgrades.find(u => u.id === 'perm_ia_maker')?.purchased;
+
+        let baseMps = (owned['upgrade1'] || 0) * 0.1;
+        if (permBrush) baseMps *= 2.0;
+
+        let mult = 1.0;
+        if (permLub) mult += 0.10;
+        if (permBat) mult += 0.25;
+        if (permIa) mult += 0.50;
+
+        return baseMps * mult;
+    }
+
+    function calculateLocalClickPower() {
+        let power = 1.0;
+        if (permanentUpgrades.find(u => u.id === 'perm_disco_diamante')?.purchased) {
+            power += 1.0;
+        }
+        return power;
+    }
+
+    function saveLocalState() {
+        localStorage.setItem('makita_local_state', JSON.stringify({
+            makitas: makitas,
+            owned: owned
+        }));
+    }
+
+    function tryConnectWebSocket() {
+        if (!window.location.hostname || window.location.protocol === 'file:') {
+            initLocalSimulation();
+            return;
+        }
+
+        try {
+            socket = new WebSocket('ws://' + window.location.hostname + ':81/');
+            
+            socket.onopen = () => {
+                isLocalMode = false;
+                logEl.textContent = 'Conectado à Oficina Global (ESP)!';
+                logEl.style.color = 'var(--text-lo)';
+                // Sincroniza compras salvas localmente com o ESP se necessário
+                permanentUpgrades.filter(u => u.purchased).forEach(u => {
+                    socket.send(`PERM_BUY:${u.id}:0`);
+                });
+            };
+
+            socket.onclose = () => {
+                if (!isLocalMode) {
+                    initLocalSimulation();
+                }
+            };
+
+            socket.onerror = () => {
+                if (!isLocalMode) {
+                    initLocalSimulation();
+                }
+            };
+
+            socket.onmessage = handleSocketMessage;
+        } catch(e) {
+            initLocalSimulation();
+        }
+    }
 
     let serverClickPower = 1.0;
 
-    socket.onopen = () => {
-        logEl.textContent = 'Conectado à Oficina Global!';
-        // Sincroniza compras salvas localmente com o ESP se necessário
-        permanentUpgrades.filter(u => u.purchased).forEach(u => {
-            socket.send(`PERM_BUY:${u.id}:0`);
-        });
-    };
-
-    socket.onclose = () => {
-        logEl.textContent = 'Desconectado do servidor. Tentando reconectar...';
-    };
-
-    socket.onerror = () => {
-        logEl.textContent = 'Erro de conexão com o ESP32.';
-    };
-
     // ---------- estado ----------
-    // makitas/mps chegam do ESP32 — o navegador nunca soma nada por conta
-    // própria, só reflete o que o servidor manda.
     let makitas = 0;
-    let mps = 0; // makitas por segundo, soma de todos os upgrades comprados
-
-    // quantas unidades cada clique de compra vai adquirir — alterado pelos
-    // botões 1 / 10 / MAX logo acima da lista de upgrades
-    // (precisa existir antes de `upgrades`/`buildShopList` porque o desc
-    // de cada item é recalculado com base nela)
-    // valor numérico (1, 10) ou a string 'max' (compra o máximo possível
-    // respeitando o saldo de makitas e o limite MAX_OWNED)
+    let mps = 0;
     let buyQty = 1;
-
-    // nenhum upgrade pode ser comprado mais que isso
     const MAX_OWNED = 100;
 
     // ---------- upgrades da loja ----------
-    // Para adicionar um novo upgrade, basta acrescentar um objeto neste array.
-    // O resto do código (renderização, cálculo de custo, compra) é genérico
-    // e lê essa lista automaticamente — não precisa mexer no HTML nem duplicar
-    // nenhuma função.
-    //
-    // campos de cada upgrade:
-    //   id       identificador único (string, sem espaços) — usado nos ids do DOM
-    //   name     nome mostrado na loja
-    //   icon     emoji/caractere mostrado no ícone quadrado
-    //   baseCost custo da 1ª unidade
-    //   growth   multiplicador de custo a cada unidade comprada (1.15 = +15%)
-    //   mps      quanto de makitas/s CADA UNIDADE adiciona à produção
-    //
-    // a descrição (desc) não é mais um texto fixo: ela é calculada em
-    // render() a partir de `upgrade.mps * buyQty`, então o texto mostrado na
-    // loja sempre reflete o ganho para a quantidade selecionada (1, 10 ou 100).
-    //
-    // exemplo de um segundo upgrade (é só descomentar e ajustar os números):
-    // { id: 'upgrade2', name: 'Upgrade 2', icon: '🔧',
-    //   baseCost: 100, growth: 1.15, mps: 5 },
     const upgrades = [
         { id: 'upgrade1', name: 'Upgrade 1', icon: '⚙️', baseCost: 10, growth: 1.10, mps: 0.1 },
     ];
 
-    // quantidade comprada de cada upgrade, indexado por id (preenchido abaixo)
     const owned = {};
     upgrades.forEach(u => { owned[u.id] = 0; });
 
@@ -1024,15 +1081,21 @@
         });
     }
 
-    // pede pro ESP32 comprar o upgrade. `qty` é calculado localmente só
-    // pra decidir SE vale a pena mandar a mensagem (evita clique em botão
-    // desabilitado) — quem decide o resultado de verdade é o servidor, que
-    // vai responder com o novo `owned`/`makitas`/`mps` via WebSocket.
+    // pede pro ESP32 comprar o upgrade. Em modo local, processa a compra diretamente.
     function buyUpgrade(upgrade) {
-        const { qty } = computeBuy(upgrade);
+        const { qty, cost } = computeBuy(upgrade);
         if (qty <= 0) return;
-        if (socket.readyState === WebSocket.OPEN) {
+
+        if (socket && socket.readyState === WebSocket.OPEN) {
             socket.send(`BUY:${upgrade.id}:${buyQty}`);
+        } else if (isLocalMode) {
+            if (makitas >= cost) {
+                makitas -= cost;
+                owned[upgrade.id] = (owned[upgrade.id] || 0) + qty;
+                mps = calculateLocalMps();
+                saveLocalState();
+                render();
+            }
         }
     }
 
@@ -1050,9 +1113,13 @@
         perm.purchased = true;
         savePermanentProgress();
 
-        // Envia requisição de dedução de custo se conectado ao ESP32
-        if (socket.readyState === WebSocket.OPEN) {
+        if (socket && socket.readyState === WebSocket.OPEN) {
             socket.send(`PERM_BUY:${perm.id}:${perm.cost}`);
+        } else if (isLocalMode) {
+            makitas -= perm.cost;
+            mps = calculateLocalMps();
+            serverClickPower = calculateLocalClickPower();
+            saveLocalState();
         }
 
         render();
@@ -1162,7 +1229,7 @@
         statMpsEl.textContent = mps.toFixed(1);
 
         // Calcula poder de clique com bônus de melhorias permanentes
-        let clickPower = serverClickPower || 1.0;
+        let clickPower = (isLocalMode ? calculateLocalClickPower() : serverClickPower) || 1.0;
         if (permanentUpgrades.find(u => u.id === 'perm_disco_diamante')?.purchased) {
             clickPower = Math.max(clickPower, 2.0);
         }
@@ -1256,7 +1323,7 @@
 
     // feedback visual instantâneo do clique — não mexe em `makitas`/`mps`
     function playClickFeedback() {
-        let gain = serverClickPower || 1.0;
+        let gain = (isLocalMode ? calculateLocalClickPower() : serverClickPower) || 1.0;
         if (permanentUpgrades.find(u => u.id === 'perm_disco_diamante')?.purchased) {
             gain = Math.max(gain, 2.0);
         }
@@ -1270,13 +1337,23 @@
     // clique manual — mesma ação que o botão físico do ESP32 vai disparar.
     makitaBtn.addEventListener('click', () => {
         playClickFeedback();
-        if (socket.readyState === WebSocket.OPEN) {
+        if (socket && socket.readyState === WebSocket.OPEN) {
             socket.send('CLICK');
+        } else if (isLocalMode) {
+            let gain = calculateLocalClickPower();
+            if (permanentUpgrades.find(u => u.id === 'perm_empunhadura')?.purchased) {
+                gain += (mps * 0.05);
+            }
+            makitas += gain;
+            totalMakitasMade += gain;
+            savePermanentProgress();
+            saveLocalState();
+            render();
         }
     });
 
     // recebe o estado atualizado do ESP32
-    socket.onmessage = (event) => {
+    function handleSocketMessage(event) {
         let data;
         try {
             data = JSON.parse(event.data);
@@ -1314,9 +1391,14 @@
         }
 
         render();
-    };
+    }
 
     buildShopList();
+    tryConnectWebSocket();
+    if (isLocalMode) {
+        mps = calculateLocalMps();
+        serverClickPower = calculateLocalClickPower();
+    }
     render();
 </script>
 </body>
