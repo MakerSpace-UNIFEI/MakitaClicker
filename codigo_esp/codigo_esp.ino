@@ -43,6 +43,9 @@ void resetMega() {
 
 // ===== ROTINA STK500v2 PARA GRAVAÇÃO DO ARDUINO MEGA =====
 bool sendStk500v2(Stream &s, const uint8_t *payload, uint16_t len, uint8_t *resp, uint16_t &respLen, uint8_t &seqNum, uint32_t timeoutMs = 2000) {
+  // Limpa qualquer byte residual na serial antes de enviar
+  while (s.available()) s.read();
+
   uint8_t header[5];
   header[0] = 0x1B; // MESSAGE_START
   header[1] = seqNum;
@@ -59,13 +62,16 @@ bool sendStk500v2(Stream &s, const uint8_t *payload, uint16_t len, uint8_t *resp
   s.write(checksum);
   s.flush();
 
+  // Aguarda resposta sincronizando no 0x1B inicial (descarta ruídos eventuais)
   unsigned long start = millis();
-  while (s.available() < 5) {
-    if (millis() - start > timeoutMs) return false;
+  while (millis() - start < timeoutMs) {
+    while (s.available() && s.peek() != 0x1B) s.read();
+    if (s.available() >= 5 && s.peek() == 0x1B) break;
+    delay(1);
     yield();
   }
 
-  if (s.read() != 0x1B) return false;
+  if (s.available() < 5 || s.read() != 0x1B) return false;
   uint8_t rSeq = s.read();
   uint8_t rLenH = s.read();
   uint8_t rLenL = s.read();
@@ -76,6 +82,7 @@ bool sendStk500v2(Stream &s, const uint8_t *payload, uint16_t len, uint8_t *resp
   start = millis();
   while (s.available() < (rLen + 1)) {
     if (millis() - start > timeoutMs) return false;
+    delay(1);
     yield();
   }
 
@@ -178,43 +185,57 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
       pageBuffer[bytesRead++] = 0xFF;
     }
 
-    // CMD_LOAD_ADDRESS (endereço em words de 16-bit com flag para >128KB)
-    uint32_t wordAddr = currentAddr >> 1;
-    if (currentAddr >= 0x20000) wordAddr |= 0x80000000;
-    uint8_t loadAddrCmd[] = {
-      0x06,
-      (uint8_t)((wordAddr >> 24) & 0xFF),
-      (uint8_t)((wordAddr >> 16) & 0xFF),
-      (uint8_t)((wordAddr >> 8) & 0xFF),
-      (uint8_t)(wordAddr & 0xFF)
-    };
+    // Tenta gravar a pagina com ate 3 tentativas (resiliencia a timing)
+    bool pageOk = false;
+    for (int retry = 0; retry < 3; retry++) {
+      // CMD_LOAD_ADDRESS (endereço em words de 16-bit com flag para >128KB)
+      uint32_t wordAddr = currentAddr >> 1;
+      if (currentAddr >= 0x20000) wordAddr |= 0x80000000;
+      uint8_t loadAddrCmd[] = {
+        0x06,
+        (uint8_t)((wordAddr >> 24) & 0xFF),
+        (uint8_t)((wordAddr >> 16) & 0xFF),
+        (uint8_t)((wordAddr >> 8) & 0xFF),
+        (uint8_t)(wordAddr & 0xFF)
+      };
 
-    if (!sendStk500v2(megaSerial, loadAddrCmd, sizeof(loadAddrCmd), resp, respLen, seq, 1000) || resp[1] != 0x00) {
-      Serial.printf("[OTA-MEGA] Erro no LOAD_ADDRESS em 0x%X\n", currentAddr);
-      http.end();
-      return false;
+      if (!sendStk500v2(megaSerial, loadAddrCmd, sizeof(loadAddrCmd), resp, respLen, seq, 1000) || resp[1] != 0x00) {
+        delay(10);
+        continue;
+      }
+
+      // CMD_PROGRAM_FLASH_ISP
+      progPayload[0] = 0x13;
+      progPayload[1] = (PAGE_SIZE >> 8) & 0xFF;
+      progPayload[2] = PAGE_SIZE & 0xFF;
+      progPayload[3] = 0xC1;
+      progPayload[4] = 0x0A;
+      progPayload[5] = 0x40;
+      progPayload[6] = 0x4C;
+      progPayload[7] = 0x00;
+      progPayload[8] = 0x00;
+      progPayload[9] = 0x00;
+      memcpy(&progPayload[10], pageBuffer, PAGE_SIZE);
+
+      if (sendStk500v2(megaSerial, progPayload, sizeof(progPayload), resp, respLen, seq, 2000) && resp[1] == 0x00) {
+        pageOk = true;
+        break;
+      }
+      delay(15);
     }
 
-    // CMD_PROGRAM_FLASH_ISP
-    progPayload[0] = 0x13;
-    progPayload[1] = (PAGE_SIZE >> 8) & 0xFF;
-    progPayload[2] = PAGE_SIZE & 0xFF;
-    progPayload[3] = 0xC1;
-    progPayload[4] = 0x0A;
-    progPayload[5] = 0x40;
-    progPayload[6] = 0x4C;
-    progPayload[7] = 0x00;
-    progPayload[8] = 0x00;
-    progPayload[9] = 0x00;
-    memcpy(&progPayload[10], pageBuffer, PAGE_SIZE);
-
-    if (!sendStk500v2(megaSerial, progPayload, sizeof(progPayload), resp, respLen, seq, 2000) || resp[1] != 0x00) {
-      Serial.printf("[OTA-MEGA] Erro gravando pagina em 0x%X\n", currentAddr);
+    if (!pageOk) {
+      Serial.printf("[OTA-MEGA] Erro gravando pagina em 0x%X (status 0x%02X)\n", currentAddr, resp[1]);
       http.end();
       return false;
     }
 
     currentAddr += toRead;
+    if ((currentAddr % 1024) == 0 || currentAddr >= (uint32_t)totalBytes) {
+      Serial.printf("[OTA-MEGA] Progresso: %d / %d bytes (%.0f%%)\n",
+                    currentAddr, totalBytes, (float)currentAddr * 100.0 / totalBytes);
+    }
+    delay(5);
     yield();
   }
 
