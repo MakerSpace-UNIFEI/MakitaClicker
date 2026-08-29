@@ -158,3 +158,32 @@ git push origin main
 
 1. O Cloudflare Pages compilará os códigos do ESP8266 e do Arduino Mega automaticamente.
 2. Na próxima vez que o sistema reiniciar, o ESP8266 baixa e regrava os componentes atualizados.
+
+---
+
+## 🛠️ Primeiro Flash Manual (Configuração Inicial)
+
+Para preparar as placas antes de usar as atualizações automáticas:
+
+### 1. Arduino Mega 2560
+1. Conecte o Arduino Mega ao computador via USB.
+2. Abra [`codigo_arduino/codigo_arduino.ino`](file:///home/vaugusto/Desktop/MakitaClicker/codigo_arduino/codigo_arduino.ino) na Arduino IDE.
+3. Instale a biblioteca **LiquidCrystal I2C** pelo Library Manager se ainda não tiver.
+4. Selecione a placa **Arduino Mega or Mega 2560** e a porta COM/TTY correspondente.
+5. Clique em **Carregar (Upload)**.
+
+### 2. ESP8266 NodeMCU v2
+1. Conecte o ESP8266 ao computador via USB.
+2. Abra [`codigo_esp/codigo_esp.ino`](file:///home/vaugusto/Desktop/MakitaClicker/codigo_esp/codigo_esp.ino) na Arduino IDE.
+3. Instale as bibliotecas **WebSockets** e **ArduinoJson** pelo Library Manager.
+4. Selecione a placa **NodeMCU 1.0 (ESP-12E Module)**.
+5. Clique em **Carregar (Upload)**.
+
+### 3. Conexão dos Fios
+Conecte os 4 jumpers entre as placas:
+- **Mega TX0 (Pino 1)** ➔ **ESP D6 (RX)**
+- **Mega RX0 (Pino 0)** ➔ **ESP D7 (TX)**
+- **Mega RESET** ➔ **ESP D5**
+- **Mega GND** ➔ **ESP GND**
+
+Pronto! A partir desse momento, **todas as próximas atualizações de ambos os microcontroladores acontecerão 100% no ar via Cloudflare Pages!**

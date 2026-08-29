@@ -1,28 +1,29 @@
 # 🎮 Arquitetura e Organização do Jogo — MakitaClicker
 
-> Documento de referência rápida para o funcionamento, regras de negócio, mecânicas de gameplay, árvore de habilidades e comunicação hardware/software.
+> Documento de referência técnica para o funcionamento, regras de negócio, mecânicas de gameplay, árvore de habilidades, persistência de dados e comunicação hardware/software.
 
 ---
 
 ## 1. ⚙️ Visão Geral do Sistema
 
-O **MakitaClicker** é um jogo híbrido físico/digital. O hardware do **ESP8266** atua como o servidor autoritativo da partida (saldo de Makitas, produção passiva, compras de upgrades e multiplicadores), enquanto a **Interface Web** e o **Arduino Mega** são clientes de interação.
+O **MakitaClicker** é um jogo híbrido físico/digital. O hardware do **ESP8266** atua como o servidor autoritativo da partida (saldo de Makitas, produção passiva, compras de upgrades, árvore de habilidades e persistência em flash), enquanto a **Interface Web** e o **Arduino Mega** são clientes de interação em tempo real.
 
 ```
-┌─────────────────┐      Serial 9600 baud      ┌─────────────────────────┐
-│  Arduino Mega   │ ◄────────────────────────► │         ESP8266         │
-│ (Botão 7 + LCD) │   CLICK / MAKITA:X,MPS     │ (Servidor Autoritativo) │
-└─────────────────┘                            └────────────┬────────────┘
-                                                            │ WebSocket :81
-                                                            │ (HTTP :80 LittleFS)
-                                                            ▼
-                                               ┌─────────────────────────┐
-                                               │   Interface Web (JS)    │
-                                               │   - Clicker & Efeitos   │
-                                               │   - Loja de Oficinas    │
-                                               │   - Árvore Habilidades  │
-                                               │   - Estatísticas        │
-                                               └─────────────────────────┘
+┌─────────────────┐      Serial0 115200 baud      ┌─────────────────────────┐
+│  Arduino Mega   │ ◄───────────────────────────► │         ESP8266         │
+│ (Botão 7 + LCD) │      CLICK / MAKITA:X,MPS     │ (Servidor Autoritativo) │
+└─────────────────┘    (STK500v2 OTA no Boot)     └────────────┬────────────┘
+                                                               │ WebSocket :81
+                                                               │ (HTTP :80 LittleFS)
+                                                               ▼
+                                                  ┌─────────────────────────┐
+                                                  │   Interface Web (JS)    │
+                                                  │   - Clicker & Efeitos   │
+                                                  │   - Loja de Oficinas    │
+                                                  │   - Árvore Habilidades  │
+                                                  │   - Persistência Flash  │
+                                                  │   - Botão Reset Total   │
+                                                  └─────────────────────────┘
 ```
 
 ---
@@ -54,17 +55,28 @@ As melhorias permanentes fornecem **multiplicadores e bônus diretos** tanto na 
 
 - **Fórmula de Custo por Unidade:**
   $$\text{Custo}(n) = \lceil \text{baseCost} \times \text{growth}^n \rceil$$
+  *(com $\text{baseCost} = 10$ e $\text{growth} = 1.10$)*
 - **Teto Máximo:** 100 unidades por tipo de oficina (`MAX_OWNED = 100`).
 - **Modos de Compra:** `1x`, `10x`, `MAX` (calcula o lote máximo acessível com o saldo atual sem ultrapassar 100).
 
 ---
 
-## 4. 📡 Protocolo de Comunicação em Tempo Real
+## 4. 💾 Persistência de Dados e Reset
+
+- **Arquivo no LittleFS:** `/gamestate.json`
+- **Autosave:** O estado completo da partida (saldo de Makitas, quantidade de upgrades e flags das habilidades permanentes) é gravado automaticamente a cada **10 segundos** e imediatamente após compras.
+- **Carregamento Automático:** No boot, o ESP executa `loadGameState()` e restaura a partida exatamente de onde parou.
+- **Comando de Reset Total:** Via WebSocket (`RESET`), apaga `/gamestate.json`, zera o estado em memória e transmite o estado limpo para o display LCD e navegadores.
+
+---
+
+## 5. 📡 Protocolo de Comunicação em Tempo Real
 
 ### WebSocket (Porta 81) — Cliente ➔ ESP:
 - `CLICK`: Registra clique manual (computa bônus de clique + sinergia de MPS).
 - `BUY:<upgradeId>:<qty|max>`: Solicita compra de lote da oficina.
 - `PERM_BUY:<permId>:<cost>`: Compra e ativa melhoria permanente na árvore.
+- `RESET`: Reinicia completamente o progresso do jogo.
 
 ### WebSocket (Porta 81) — ESP ➔ Cliente (JSON Broadcast):
 ```json
@@ -86,16 +98,19 @@ As melhorias permanentes fornecem **multiplicadores e bônus diretos** tanto na 
 }
 ```
 
-### Serial UART (9600 baud) — ESP ➔ Arduino Mega:
+### Serial UART0 (115200 baud) — ESP ➔ Arduino Mega:
 - Formato: `MAKITA:<saldo_inteiro>,<mps_float>\n`
 - Exemplo: `MAKITA:1500,14.5`
 
-### Serial UART (9600 baud) — Arduino Mega ➔ ESP:
+### Serial UART0 (115200 baud) — Arduino Mega ➔ ESP:
 - Formato: `CLICK\n` (Acionado pelo botão no pino 7 com debounce de 40ms).
 
 ---
 
-## 5. 🔄 Ciclo de Build, CI/CD e OTA Automático
+## 6. 🔄 Ciclo de Build, CI/CD e OTA Automático Unificado
 
-- **Cloudflare Pages:** Ao receber um `git push`, o `build.sh` compila o firmware com `arduino-cli`, empacota o `LittleFS` com `mklittlefs` e versiona automaticamente através do contador de commits (`git rev-list --count HEAD`).
-- **ESP8266 Boot:** Conecta ao Wi-Fi, consulta `version.json` e atualiza firmware/filesystem sem necessidade de cabos.
+- **Cloudflare Pages:** Ao receber um `git push`, o `build.sh` realiza `git fetch --unshallow`, compila tanto o firmware do **ESP8266** quanto o do **Arduino Mega** com `arduino-cli`, gera a imagem do `LittleFS` com `mklittlefs` e versiona automaticamente através do total de commits (`git rev-list --count HEAD`).
+- **ESP8266 Boot:** Conecta ao Wi-Fi, consulta `version.json` com header `no-cache` e:
+  1. Atualiza o **Arduino Mega** via protocolo STK500v2 (Pinos 0 e 1).
+  2. Atualiza a interface web do **LittleFS** (sem reboot).
+  3. Atualiza o firmware do **ESP8266** (com reboot automático).
