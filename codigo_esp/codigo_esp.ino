@@ -14,6 +14,7 @@
 // NÃO edite manualmente. O Cloudflare Pages injeta o valor correto antes de compilar.
 #define CURRENT_FIRMWARE_VER 0
 #define CURRENT_FS_VER       0
+#define CURRENT_MEGA_VER     0
 
 #define MEGA_RESET_PIN D5
 
@@ -26,7 +27,7 @@ const char* hostName = "esp-painel";
 ESP8266WebServer server(80);
 WebSocketsServer webSocket = WebSocketsServer(81);
 
-// D6 = RX (Mega 18), D7 = TX (Mega 19)
+// D6 = RX (Mega TX0 / Pino 1), D7 = TX (Mega RX0 / Pino 0)
 SoftwareSerial megaSerial(D6, D7);
 
 // Reinicia o Arduino Mega via pulso LOW em modo Open-Drain seguro
@@ -36,8 +37,201 @@ void resetMega() {
   digitalWrite(MEGA_RESET_PIN, LOW);
   delay(60);
   pinMode(MEGA_RESET_PIN, INPUT); // Retorna imediatamente para Hi-Z (alta impedancia)
-  delay(100); // Aguarda boot do Mega
+  delay(150); // Aguarda boot do Mega
   Serial.println("[MEGA] Reset concluido.");
+}
+
+// ===== ROTINA STK500v2 PARA GRAVAÇÃO DO ARDUINO MEGA =====
+bool sendStk500v2(Stream &s, const uint8_t *payload, uint16_t len, uint8_t *resp, uint16_t &respLen, uint8_t &seqNum, uint32_t timeoutMs = 2000) {
+  uint8_t header[5];
+  header[0] = 0x1B; // MESSAGE_START
+  header[1] = seqNum;
+  header[2] = (len >> 8) & 0xFF;
+  header[3] = len & 0xFF;
+  header[4] = 0x0E; // TOKEN
+
+  uint8_t checksum = 0;
+  for (int i = 0; i < 5; i++) checksum ^= header[i];
+  for (uint16_t i = 0; i < len; i++) checksum ^= payload[i];
+
+  s.write(header, 5);
+  s.write(payload, len);
+  s.write(checksum);
+  s.flush();
+
+  unsigned long start = millis();
+  while (s.available() < 5) {
+    if (millis() - start > timeoutMs) return false;
+    yield();
+  }
+
+  if (s.read() != 0x1B) return false;
+  uint8_t rSeq = s.read();
+  uint8_t rLenH = s.read();
+  uint8_t rLenL = s.read();
+  uint8_t rTok = s.read();
+  if (rTok != 0x0E) return false;
+
+  uint16_t rLen = ((uint16_t)rLenH << 8) | rLenL;
+  start = millis();
+  while (s.available() < (rLen + 1)) {
+    if (millis() - start > timeoutMs) return false;
+    yield();
+  }
+
+  uint8_t rCheck = 0x1B ^ rSeq ^ rLenH ^ rLenL ^ rTok;
+  for (uint16_t i = 0; i < rLen; i++) {
+    uint8_t b = s.read();
+    if (resp && i < 64) resp[i] = b;
+    rCheck ^= b;
+  }
+  uint8_t expCheck = s.read();
+  seqNum++;
+
+  if (rCheck != expCheck) return false;
+  respLen = rLen;
+  return true;
+}
+
+bool updateMega(WiFiClientSecure &client, const String &url) {
+  Serial.println("[OTA-MEGA] Baixando e gravando binario do Arduino Mega...");
+
+  HTTPClient http;
+  http.begin(client, url);
+  int httpCode = http.GET();
+  if (httpCode != HTTP_CODE_OK) {
+    Serial.printf("[OTA-MEGA] Falha HTTP: %d\n", httpCode);
+    http.end();
+    return false;
+  }
+
+  int totalBytes = http.getSize();
+  Serial.printf("[OTA-MEGA] Tamanho do binario: %d bytes\n", totalBytes);
+  WiFiClient *stream = http.getStreamPtr();
+
+  // Pulsa o RESET do Mega para ativar o bootloader STK500v2
+  pinMode(MEGA_RESET_PIN, OUTPUT);
+  digitalWrite(MEGA_RESET_PIN, LOW);
+  delay(100);
+  digitalWrite(MEGA_RESET_PIN, HIGH);
+  pinMode(MEGA_RESET_PIN, INPUT);
+
+  megaSerial.begin(115200);
+  while (megaSerial.available()) megaSerial.read();
+  delay(150);
+
+  uint8_t seq = 1;
+  uint8_t resp[64];
+  uint16_t respLen = 0;
+
+  // 1. Handshake (CMD_SIGN_ON)
+  bool syncOk = false;
+  uint8_t signOnCmd[] = { 0x01 };
+  for (int attempt = 0; attempt < 10; attempt++) {
+    if (sendStk500v2(megaSerial, signOnCmd, sizeof(signOnCmd), resp, respLen, seq, 400)) {
+      if (respLen >= 2 && resp[0] == 0x01 && resp[1] == 0x00) {
+        syncOk = true;
+        break;
+      }
+    }
+    delay(50);
+  }
+
+  if (!syncOk) {
+    Serial.println("[OTA-MEGA] Erro: Arduino Mega nao respondeu ao STK500v2.");
+    http.end();
+    return false;
+  }
+  Serial.println("[OTA-MEGA] Handshake STK500v2 OK!");
+
+  // 2. Enter Prog Mode
+  uint8_t enterProg[] = { 0x10, 0xC8, 0x64, 0x19, 0x20, 0xAC, 0x53, 0x00, 0x00 };
+  sendStk500v2(megaSerial, enterProg, sizeof(enterProg), resp, respLen, seq, 1000);
+
+  // 3. Grava páginas de 256 bytes (ATmega2560)
+  const uint16_t PAGE_SIZE = 256;
+  uint8_t pageBuffer[PAGE_SIZE];
+  uint32_t currentAddr = 0;
+  uint8_t progPayload[10 + PAGE_SIZE];
+
+  while (currentAddr < (uint32_t)totalBytes) {
+    uint16_t toRead = min((uint32_t)PAGE_SIZE, (uint32_t)(totalBytes - currentAddr));
+    uint16_t bytesRead = 0;
+    unsigned long readStart = millis();
+
+    while (bytesRead < toRead && millis() - readStart < 5000) {
+      if (stream->available()) {
+        pageBuffer[bytesRead++] = stream->read();
+      } else {
+        delay(1);
+        yield();
+      }
+    }
+
+    if (bytesRead < toRead) {
+      Serial.println("[OTA-MEGA] Erro: Timeout na leitura HTTP.");
+      http.end();
+      return false;
+    }
+
+    while (bytesRead < PAGE_SIZE) {
+      pageBuffer[bytesRead++] = 0xFF;
+    }
+
+    // CMD_LOAD_ADDRESS (endereço em words de 16-bit com flag para >128KB)
+    uint32_t wordAddr = currentAddr >> 1;
+    if (currentAddr >= 0x20000) wordAddr |= 0x80000000;
+    uint8_t loadAddrCmd[] = {
+      0x06,
+      (uint8_t)((wordAddr >> 24) & 0xFF),
+      (uint8_t)((wordAddr >> 16) & 0xFF),
+      (uint8_t)((wordAddr >> 8) & 0xFF),
+      (uint8_t)(wordAddr & 0xFF)
+    };
+
+    if (!sendStk500v2(megaSerial, loadAddrCmd, sizeof(loadAddrCmd), resp, respLen, seq, 1000) || resp[1] != 0x00) {
+      Serial.printf("[OTA-MEGA] Erro no LOAD_ADDRESS em 0x%X\n", currentAddr);
+      http.end();
+      return false;
+    }
+
+    // CMD_PROGRAM_FLASH_ISP
+    progPayload[0] = 0x13;
+    progPayload[1] = (PAGE_SIZE >> 8) & 0xFF;
+    progPayload[2] = PAGE_SIZE & 0xFF;
+    progPayload[3] = 0xC1;
+    progPayload[4] = 0x0A;
+    progPayload[5] = 0x40;
+    progPayload[6] = 0x4C;
+    progPayload[7] = 0x00;
+    progPayload[8] = 0x00;
+    progPayload[9] = 0x00;
+    memcpy(&progPayload[10], pageBuffer, PAGE_SIZE);
+
+    if (!sendStk500v2(megaSerial, progPayload, sizeof(progPayload), resp, respLen, seq, 2000) || resp[1] != 0x00) {
+      Serial.printf("[OTA-MEGA] Erro gravando pagina em 0x%X\n", currentAddr);
+      http.end();
+      return false;
+    }
+
+    currentAddr += toRead;
+    yield();
+  }
+
+  // 4. Leave Prog Mode
+  uint8_t leaveProg[] = { 0x11, 0x01, 0x01 };
+  sendStk500v2(megaSerial, leaveProg, sizeof(leaveProg), resp, respLen, seq, 1000);
+
+  // Reinicia o Mega para rodar o novo código
+  pinMode(MEGA_RESET_PIN, OUTPUT);
+  digitalWrite(MEGA_RESET_PIN, LOW);
+  delay(100);
+  digitalWrite(MEGA_RESET_PIN, HIGH);
+  pinMode(MEGA_RESET_PIN, INPUT);
+
+  http.end();
+  Serial.println("[OTA-MEGA] Arduino Mega regravado com sucesso!");
+  return true;
 }
 
 // ===== ESTADO DO JOGO =====
@@ -278,23 +472,31 @@ void checkOTA() {
   String payload = http.getString();
   http.end();
 
-  StaticJsonDocument<256> doc;
+  StaticJsonDocument<384> doc;
   DeserializationError err = deserializeJson(doc, payload);
   if (err) {
     Serial.printf("[OTA] JSON invalido: %s\n", err.c_str());
     return;
   }
 
-  String fwUrl = doc["firmware_url"] | "";
-  String fsUrl = doc["fs_url"]       | "";
-  int remoteFwVer = doc["firmware_version"] | 0;
-  int remoteFsVer = doc["fs_version"]       | 0;
+  String fwUrl   = doc["firmware_url"] | "";
+  String fsUrl   = doc["fs_url"]       | "";
+  String megaUrl = doc["mega_url"]     | "";
+  int remoteFwVer   = doc["firmware_version"] | 0;
+  int remoteFsVer   = doc["fs_version"]       | 0;
+  int remoteMegaVer = doc["mega_version"]     | 0;
 
-  Serial.printf("[OTA] Local FW=%d FS=%d | Remoto FW=%d FS=%d\n",
-                CURRENT_FIRMWARE_VER, CURRENT_FS_VER, remoteFwVer, remoteFsVer);
+  Serial.printf("[OTA] Local FW=%d FS=%d MEGA=%d | Remoto FW=%d FS=%d MEGA=%d\n",
+                CURRENT_FIRMWARE_VER, CURRENT_FS_VER, CURRENT_MEGA_VER,
+                remoteFwVer, remoteFsVer, remoteMegaVer);
 
-  // Atualiza FS primeiro (sem reboot), depois firmware (com reboot)
-  if (remoteFsVer > CURRENT_FS_VER) {
+  // 1. Atualiza o Arduino Mega se houver nova versao
+  if (remoteMegaVer > CURRENT_MEGA_VER && megaUrl.length() > 0) {
+    updateMega(client, megaUrl);
+  }
+
+  // 2. Atualiza FS do ESP (sem reboot)
+  if (remoteFsVer > CURRENT_FS_VER && fsUrl.length() > 0) {
     Serial.println("[OTA] Atualizando LittleFS...");
     ESPhttpUpdate.rebootOnUpdate(false);
     t_httpUpdate_return ret = ESPhttpUpdate.updateFS(client, fsUrl);
@@ -305,7 +507,8 @@ void checkOTA() {
     }
   }
 
-  if (remoteFwVer > CURRENT_FIRMWARE_VER) {
+  // 3. Atualiza Firmware do ESP (com reboot automatico)
+  if (remoteFwVer > CURRENT_FIRMWARE_VER && fwUrl.length() > 0) {
     Serial.println("[OTA] Atualizando Firmware...");
     ESPhttpUpdate.rebootOnUpdate(true);
     t_httpUpdate_return ret = ESPhttpUpdate.update(client, fwUrl);
@@ -316,7 +519,7 @@ void checkOTA() {
 
 void setup() {
   Serial.begin(115200);
-  megaSerial.begin(9600);
+  megaSerial.begin(115200);
 
   // Inicializa o pino de reset do Mega em modo Open-Drain (alta impedancia)
   pinMode(MEGA_RESET_PIN, INPUT);

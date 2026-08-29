@@ -4,66 +4,67 @@
 >
 > **Autores:** Nicolae Maximus T. N. Lopes · Victor Augusto de A. Silvério · Oliver Daniel Schiinke
 
-MakitaClicker é um jogo estilo *cookie clicker* físico-digital, onde o jogador acumula "Makitas" clicando em um botão físico ou através de uma interface web. O sistema roda num **Arduino Mega** + **ESP8266**, com um painel LCD, WebServer local e atualização automática de firmware via internet (OTA).
+MakitaClicker é um jogo estilo *cookie clicker* físico-digital, onde o jogador acumula "Makitas" clicando em um botão físico ou através de uma interface web. O sistema roda num **Arduino Mega 2560** + **ESP8266 NodeMCU**, com painel LCD 20×4, WebServer/WebSocket em tempo real e **atualização automática e unificada de firmware via nuvem (OTA total)** para ambos os microcontroladores.
 
 ---
 
 ## 📋 Índice
 
 - [Como Funciona](#-como-funciona)
-- [Arquitetura de Hardware](#-arquitetura-de-hardware)
+- [Arquitetura de Hardware e Ligações](#-arquitetura-de-hardware-e-ligações)
 - [Arquitetura de Software](#-arquitetura-de-software)
 - [Pipeline CI/CD — Cloudflare Pages](#-pipeline-cicd--cloudflare-pages)
-- [Sistema OTA (Over-The-Air Update)](#-sistema-ota-over-the-air-update)
+- [Sistema OTA Unificado (ESP8266 + LittleFS + Arduino Mega)](#-sistema-ota-unificado)
 - [Estrutura de Diretórios](#-estrutura-de-diretórios)
 - [Como Fazer um Release](#-como-fazer-um-release)
-- [Configuração Inicial](#-configuração-inicial)
+- [Primeiro Flash Manual (Configuração Inicial)](#-primeiro-flash-manual)
 
 ---
 
 ## ⚙️ Como Funciona
 
-O jogo tem dois modos de interação simultâneos:
+O jogo tem dois modos de interação simultâneos e integrados:
 
 **1. Botão Físico**
-O jogador pressiona um botão conectado ao Arduino Mega (pino 7). O Mega envia o comando `CLICK` ao ESP via Serial (pinos 18/19). O ESP soma +1 Makita e transmite o novo estado para todos os clientes web via WebSocket.
+O jogador pressiona um botão conectado ao Arduino Mega (pino 7). O Mega envia o comando `CLICK` ao ESP8266 via Serial0 (115200 baud). O ESP soma as Makitas calculando os multiplicadores da árvore de habilidades e transmite o novo estado para todos os clientes web via WebSocket.
 
 **2. Interface Web**
 Qualquer dispositivo na mesma rede Wi-Fi acessa `http://esp-painel.local` (ou pelo IP). A página HTML — servida diretamente da memória flash do ESP (LittleFS) — se comunica com o ESP via WebSocket na porta 81 em tempo real.
 
-**Produção passiva:** upgrades comprados geram Makitas automaticamente a cada 100ms.
+**Produção passiva:** upgrades e melhorias permanentes geram Makitas automaticamente a cada 100ms e salvam o progresso em `/gamestate.json`.
 
 **LCD:** O Mega exibe o saldo e a taxa de produção em tempo real num display LCD I2C 20×4, recebendo atualizações do ESP via Serial.
 
 ```
-[ Botão Físico ] ──Serial──▶ [ Arduino Mega ] ──Serial──▶ [ ESP8266 ]
-                              [ LCD 20x4 I2C ]              │       │
-                              [ Display ]    ◀──Serial──────┘       │
-                                                                     │ Wi-Fi
-                                                             [ Clientes Web ]
-                                                             [ WebSocket :81 ]
+[ Botão Físico ] ──Serial──▶ [ Arduino Mega 2560 ] ──Serial0 (115200)──▶ [ ESP8266 ]
+                              [ LCD 20x4 I2C ]                           │       │
+                              [ Display ]    ◀──────Serial───────────────┘       │
+                                                                                 │ Wi-Fi
+                                                                         [ Clientes Web ]
+                                                                         [ WebSocket :81 ]
 ```
 
 ---
 
-## 🔌 Arquitetura de Hardware
+## 🔌 Arquitetura de Hardware e Ligações
 
 | Componente | Detalhe |
 |---|---|
-| **Arduino Mega 2560** | Controle do botão físico e LCD |
-| **ESP8266 NodeMCU v2** | Wi-Fi, WebServer, WebSocket, OTA |
-| **Display LCD I2C 20×4** | Exibe saldo e taxa (endereço `0x27`) |
-| **Botão** | Pino digital 7 do Mega, com `INPUT_PULLUP` |
+| **Arduino Mega 2560** | Controle do botão físico, display LCD e recepção de comandos |
+| **ESP8266 NodeMCU v2** | Wi-Fi, WebServer, WebSocket, ponte OTA e gravador STK500v2 do Mega |
+| **Display LCD I2C 20×4** | Exibe saldo e taxa (endereço I2C padrão `0x27`) |
+| **Botão Físico** | Pino digital 7 do Mega (com resistor interno `INPUT_PULLUP`) |
 
-### Conexões entre Mega e ESP8266
+### Conexões entre Arduino Mega e ESP8266 (OTA Total + Jogo)
 
-| Mega | ESP8266 | Função |
+| Arduino Mega 2560 | ESP8266 NodeMCU | Função |
 |---|---|---|
-| TX1 (pino 18) | D6 (RX) | Mega → ESP |
-| RX1 (pino 19) | D7 (TX) | ESP → Mega |
-| GND | GND | Terra comum |
+| **TX0 (Pino 1)** | **D6 (GPIO12 / RX)** | Mega → ESP (telemetria e respostas STK500v2) |
+| **RX0 (Pino 0)** | **D7 (GPIO13 / TX)** | ESP → Mega (comandos do jogo e dados de gravação) |
+| **RESET** | **D5 (GPIO14)** | Pulso de reset em modo Open-Drain seguro |
+| **GND** | **GND** | Terra de referência comum |
 
-> ⚠️ A comunicação é a **9600 baud** usando o hardware Serial1 do Mega e SoftwareSerial no ESP.
+> ℹ️ **Por que os pinos 0 e 1?** O bootloader padrão de fábrica do ATmega2560 (STK500v2) escuta na porta UART0 (pinos 0 e 1) a **115200 baud**. Conectando esses pinos, a mesma conexão serve para a jogabilidade normal e para a gravação remota de firmware.
 
 ---
 
@@ -71,137 +72,53 @@ Qualquer dispositivo na mesma rede Wi-Fi acessa `http://esp-painel.local` (ou pe
 
 ### Arduino Mega (`codigo_arduino/codigo_arduino.ino`)
 
-- Lê o botão físico com debounce de 40ms
-- Ao pressionar: envia `CLICK\n` pelo Serial1 para o ESP
-- Escuta o Serial1 aguardando pacotes `MAKITA:<valor>,<mps>` enviados pelo ESP
-- Atualiza o LCD com saldo e taxa de produção recebidos
+- Lê o botão físico no Pino 7 com debounce de 40ms
+- Ao pressionar: envia `CLICK\n` pela `Serial` (115200 baud) para o ESP
+- Escuta a `Serial` aguardando pacotes `MAKITA:<valor>,<mps>` enviados pelo ESP
+- Atualiza o LCD 20×4 com o saldo e taxa de produção recebidos
 
 ### ESP8266 (`codigo_esp/codigo_esp.ino`)
 
-Ao ligar, o ESP executa em ordem:
+Ao ligar, o ESP executa em sequência:
 
 ```
-1. Inicia Serial + SoftwareSerial (Mega)
-2. Monta o LittleFS (sistema de arquivos na flash)
-3. Conecta ao Wi-Fi "MakerSpace UNIFEI"
-4. Executa checkOTA() → checa e aplica atualizações
-5. Registra rotas HTTP (/, arquivos)
-6. Inicia WebServer na porta 80
-7. Inicia WebSocketServer na porta 81
-8. Entra no loop principal
+1. Inicia Serial USB (115200) e megaSerial (115200)
+2. Monta a partição LittleFS
+3. Conecta à rede Wi-Fi "MakerSpace UNIFEI"
+4. Executa checkOTA():
+   a. Verifica versão do Mega -> grava se houver novidade (STK500v2)
+   b. Verifica versão do LittleFS -> grava se houver novidade
+   c. Verifica versão do ESP -> grava e reinicia se houver novidade
+5. Executa resetMega() -> sincroniza o boot e LCD do Arduino Mega
+6. Registra rotas HTTP (/, imagens)
+7. Inicia WebServer (porta 80) e WebSocketServer (porta 81)
+8. Carrega o estado salvo (/gamestate.json)
+9. Entra no loop principal
 ```
-
-**Loop principal:**
-- `server.handleClient()` — serve requisições HTTP
-- `webSocket.loop()` — processa mensagens WebSocket
-- `MDNS.update()` — mantém o hostname `esp-painel.local`
-- Lê comandos do Mega via SoftwareSerial
-- Produção passiva a cada 100ms
-- Broadcast do estado a cada 500ms (se houver produção ativa)
-
-**Protocolo WebSocket (mensagens do cliente → ESP):**
-
-| Mensagem | Ação |
-|---|---|
-| `CLICK` | +1 Makita |
-| `BUY:upgrade1:1` | Compra 1 unidade do upgrade |
-| `BUY:upgrade1:10` | Compra 10 unidades |
-| `BUY:upgrade1:max` | Compra o máximo possível |
-
-**Protocolo Serial ESP → Mega:**
-
-```
-MAKITA:<saldo_inteiro>,<mps_float>
-```
-Exemplo: `MAKITA:1500,3.2`
 
 ---
 
 ## ☁️ Pipeline CI/CD — Cloudflare Pages
 
-O repositório está integrado ao **Cloudflare Pages**. A cada `git push` para a branch principal, o Cloudflare executa o `build.sh` automaticamente num container Debian e publica os artefatos gerados na CDN global.
+O repositório está integrado ao **Cloudflare Pages**. A cada `git push`, o Cloudflare executa o script [`build.sh`](file:///home/vaugusto/Desktop/MakitaClicker/build.sh) automaticamente num container Linux:
 
-### Configuração no painel Cloudflare Pages
-
-| Campo | Valor |
-|---|---|
-| Framework preset | `None` |
-| Build command | `bash build.sh` |
-| Build output directory | `online` |
-| Root directory | `/` |
-
-### O que o `build.sh` faz (em ordem)
+### O que o `build.sh` executa (em 6 etapas)
 
 ```
-[1/5] Instala o arduino-cli (binário standalone)
-[2/5] Adiciona o repositório ESP8266 e instala o core esp8266:esp8266
-[3/5] Instala as bibliotecas: WebSockets e ArduinoJson
-[4/5] Compila o sketch do ESP8266 → gera firmware.bin em ./online/
-[5/5] Localiza o mklittlefs instalado pelo core e empacota
-       codigo_esp/data/ → gera littlefs.bin em ./online/
+[1/6] Instala arduino-cli (binário independente)
+[2/6] Configura e instala os cores: esp8266:esp8266 e arduino:avr
+[3/6] Instala bibliotecas: WebSockets, ArduinoJson, LiquidCrystal I2C
+[4/6] Compila o sketch do ESP8266 -> gera online/firmware.bin
+[5/6] Compila o sketch do Arduino Mega e converte para binário -> gera online/mega.bin
+[6/6] Empacota a pasta data/ com mklittlefs -> gera online/littlefs.bin
+[*]   Gera o manifesto online/version.json sincronizado com a contagem de commits git
 ```
 
-Após o build, a pasta `online/` é publicada na CDN e fica acessível publicamente em:
-
-```
-https://makitaclicker.pages.dev/firmware.bin
-https://makitaclicker.pages.dev/littlefs.bin
-https://makitaclicker.pages.dev/version.json
-```
-
----
-
-## 📡 Sistema OTA (Over-The-Air Update)
-
-O ESP verifica e aplica atualizações automaticamente **a cada boot**, sem necessidade de cabo USB.
-
-### Como funciona
-
-```
-ESP liga
-   │
-   ▼
-Conecta ao Wi-Fi
-   │
-   ▼
-GET https://makitaclicker.pages.dev/version.json
-   │
-   ├── fs_version remoto > CURRENT_FS_VER local?
-   │      └── SIM → baixa littlefs.bin e grava na flash (sem reboot)
-   │
-   └── firmware_version remoto > CURRENT_FIRMWARE_VER local?
-          └── SIM → baixa firmware.bin e grava na flash → reboot automático
-   │
-   ▼ (nenhuma atualização necessária)
-Sobe WebServer + WebSocket normalmente
-```
-
-### Manifesto de versão (`online/version.json`)
-
-```json
-{
-  "firmware_version": 1,
-  "fs_version": 2,
-  "firmware_url": "https://makitaclicker.pages.dev/firmware.bin",
-  "fs_url": "https://makitaclicker.pages.dev/littlefs.bin"
-}
-```
-
-### Constantes de versão no firmware (`codigo_esp.ino`)
-
-```cpp
-#define CURRENT_FIRMWARE_VER 1   // versão do firmware gravado na placa
-#define CURRENT_FS_VER       2   // versão do LittleFS gravado na placa
-```
-
-> ⚠️ **Regra de ouro:** Os `#define` no `.ino` devem sempre refletir o que está gravado na placa. Se `version.json` diz `fs_version: 3`, o `.ino` deve ter `CURRENT_FS_VER 3` — caso contrário o ESP entrará em loop de atualização infinita.
-
-### Detalhes técnicos do OTA
-
-- Usa `WiFiClientSecure` com `setInsecure()` para HTTPS sem certificado (economiza RAM)
-- **FS update:** `ESPhttpUpdate.updateFS()` com `rebootOnUpdate(false)` — atualiza o sistema de arquivos sem reiniciar, permitindo aplicar firmware logo em seguida
-- **FW update:** `ESPhttpUpdate.update()` com `rebootOnUpdate(true)` — ao concluir com sucesso, o ESP reinicia automaticamente já com o novo firmware
-- Ordem importa: FS primeiro, firmware depois — garante que após o reboot o novo firmware já encontra o novo FS pronto
+Todos os artefatos são publicados diretamente na CDN global da Cloudflare:
+- `https://makitaclicker.pages.dev/version.json`
+- `https://makitaclicker.pages.dev/firmware.bin`
+- `https://makitaclicker.pages.dev/littlefs.bin`
+- `https://makitaclicker.pages.dev/mega.bin`
 
 ---
 
@@ -211,103 +128,33 @@ Sobe WebServer + WebSocket normalmente
 MakitaClicker/
 ├── build.sh                    # Script de CI/CD executado pelo Cloudflare Pages
 │
-├── codigo_esp/                 # Sketch do ESP8266 (NodeMCU v2)
-│   ├── codigo_esp.ino          # Código principal: Wi-Fi, WebServer, WebSocket, OTA
-│   └── data/                   # Conteúdo do LittleFS (sistema de arquivos da flash)
-│       ├── index.html          # Interface web do jogo
-│       └── images/             # Assets (ex: makitaCoracao.png)
+├── codigo_esp/                 # Código do ESP8266 (NodeMCU v2)
+│   ├── codigo_esp.ino          # Firmware principal, lógica do jogo e gravador STK500v2
+│   └── data/                   # Arquivos da interface Web (LittleFS)
+│       ├── index.html          # Painel web do jogo
+│       └── images/             # Imagens e ícones
 │
-├── codigo_arduino/             # Sketch do Arduino Mega 2560
-│   └── codigo_arduino.ino      # Botão físico + LCD + comunicação com ESP
+├── codigo_arduino/             # Código do Arduino Mega 2560
+│   └── codigo_arduino.ino      # Controle de botão físico, LCD e comunicação Serial0
 │
-└── online/                     # Pasta de saída pública (servida pelo Cloudflare Pages)
-    ├── version.json            # Manifesto de versões — lido pelo ESP a cada boot
-    ├── firmware.bin            # (gerado pelo build) Firmware do ESP compilado
-    └── littlefs.bin            # (gerado pelo build) Imagem do sistema de arquivos
+└── online/                     # Diretório de publicação servido pela Cloudflare CDN
+    ├── version.json            # Manifesto de versão
+    ├── firmware.bin            # Binário do ESP8266
+    ├── littlefs.bin            # Imagem do sistema de arquivos
+    └── mega.bin                # Binário bruto do Arduino Mega
 ```
 
 ---
 
 ## 🚀 Como Fazer um Release
 
-Para publicar uma atualização que o ESP vai baixar automaticamente:
-
-### 1. Faça as alterações no código ou nos arquivos web
-
-Edite `codigo_esp.ino` e/ou os arquivos em `codigo_esp/data/`.
-
-### 2. Incremente as versões
-
-**Se mudou o código `.ino`** → incremente `firmware_version` no `version.json`:
-```json
-"firmware_version": 2
-```
-E no `.ino`:
-```cpp
-#define CURRENT_FIRMWARE_VER 2
-```
-
-**Se mudou arquivos em `data/`** (HTML, imagens) → incremente `fs_version`:
-```json
-"fs_version": 3
-```
-E no `.ino`:
-```cpp
-#define CURRENT_FS_VER 3
-```
-
-> Pode incrementar os dois ao mesmo tempo se mudou ambos.
-
-### 3. Faça o push
+Basta alterar qualquer arquivo (código do Mega, código do ESP ou HTML) e enviar para o GitHub:
 
 ```bash
 git add .
-git commit -m "release: fw=2 fs=3 - descrição da mudança"
-git push
+git commit -m "feat: nova melhoria no jogo"
+git push origin main
 ```
 
-### 4. Aguarde o build (~2 minutos)
-
-O Cloudflare Pages compila tudo automaticamente. Acompanhe em [dash.cloudflare.com](https://dash.cloudflare.com).
-
-### 5. Reinicie o ESP
-
-Na próxima vez que o ESP ligar (ou ao apertar reset), ele detecta a nova versão e se atualiza. O Serial Monitor mostrará:
-
-```
-[OTA] Local FW=1 FS=2 | Remoto FW=2 FS=3
-[OTA] Atualizando LittleFS...
-[OTA] LittleFS atualizado com sucesso.
-[OTA] Atualizando Firmware...
-← reboot automático
-```
-
----
-
-## 🛠️ Configuração Inicial
-
-Para gravar o firmware pela primeira vez (único flash manual necessário):
-
-### Pré-requisitos
-
-- Arduino IDE com suporte ao ESP8266 (`https://arduino.esp8266.com/stable/package_esp8266com_index.json`)
-- Bibliotecas instaladas via Library Manager:
-  - `WebSockets` by Markus Sattler
-  - `ArduinoJson` by Benoit Blanchon
-  - `LiquidCrystal I2C` by Frank de Brabander (para o Mega)
-
-### Flash do ESP8266
-
-1. Abra `codigo_esp/codigo_esp.ino` na Arduino IDE
-2. Selecione a placa: **NodeMCU 1.0 (ESP-12E Module)**
-3. Selecione a porta COM correta
-4. Grave (`Ctrl+U`)
-5. Abra o Serial Monitor a **115200 baud** para acompanhar o boot e o OTA
-
-### Flash do Arduino Mega
-
-1. Abra `codigo_arduino/codigo_arduino.ino` na Arduino IDE
-2. Selecione a placa: **Arduino Mega or Mega 2560**
-3. Grave normalmente via USB
-
-Após o primeiro flash do ESP, todos os updates futuros acontecem automaticamente via OTA a cada boot.
+1. O Cloudflare Pages compilará os códigos do ESP8266 e do Arduino Mega automaticamente.
+2. Na próxima vez que o sistema reiniciar, o ESP8266 baixa e regrava os componentes atualizados.

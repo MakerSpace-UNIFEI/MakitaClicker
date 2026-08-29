@@ -30,8 +30,8 @@ void atualizarLCD() {
 void setup() {
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 
-  Serial.begin(115200);  // Monitor Serial USB (PC)
-  Serial1.begin(9600);   // UART Hardware Serial1 com o ESP8266 (TX1: 18, RX1: 19)
+  // Serial principal (Pinos 0 RX e 1 TX) conectada ao ESP8266 a 115200 baud
+  Serial.begin(115200);
 
   Wire.begin();
   lcd.init();
@@ -45,11 +45,6 @@ void setup() {
 
   lcd.setCursor(0, 3);
   lcd.print("Pressione o botao...");
-
-  Serial.println("\n--- ARDUINO MEGA INICIADO ---");
-  Serial.println("[INFO] Botao configurado no Pino 7.");
-  Serial.println("[INFO] Serial1 conectada ao ESP8266 a 9600 baud.");
-  Serial.println("----------------------------------------------");
 }
 
 void loop() {
@@ -58,8 +53,7 @@ void loop() {
   if (leitura != ultimoEstadoBotao) {
     if ((millis() - ultimoDebounce) > tempoDebounce) {
       if (leitura == LOW) { // Botão foi pressionado
-        Serial1.println("CLICK");
-        Serial.println("[LOCAL] Botao Pino 7 pressionado -> Comando 'CLICK' enviado pela Serial1.");
+        Serial.println("CLICK");
       }
       ultimoDebounce = millis();
       ultimoEstadoBotao = leitura;
@@ -67,13 +61,11 @@ void loop() {
   }
 
   // 2. Leitura dos pacotes recebidos do ESP8266
-  if (Serial1.available()) {
-    String buffer = Serial1.readStringUntil('\n');
+  if (Serial.available()) {
+    String buffer = Serial.readStringUntil('\n');
     buffer.trim();
 
     if (buffer.length() > 0) {
-      Serial.println("[ESP1 -> MEGA RECEBIDO]: " + buffer);
-
       // Decodifica o padrão MAKITA:<valor>,<mps>
       if (buffer.startsWith("MAKITA:")) {
         String dados = buffer.substring(7);
@@ -84,13 +76,6 @@ void loop() {
           mpsGlobal = dados.substring(separador + 1);
           
           atualizarLCD();
-          
-          // Impressão compatível com AVR Serial
-          Serial.print("[LCD ATUALIZADO] Saldo: ");
-          Serial.print(makitasGlobal);
-          Serial.print(" | Taxa: ");
-          Serial.print(mpsGlobal);
-          Serial.println("/s");
         }
       }
     }
