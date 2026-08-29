@@ -685,6 +685,12 @@
                         <div class="stat-card__val" id="statPermCount">0/0</div>
                     </div>
                 </div>
+
+                <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--panel-edge); text-align: center;">
+                    <button id="resetGameBtn" style="background: transparent; border: 1px solid var(--red-dim); color: var(--red); padding: 0.5rem 1rem; font-size: 0.75rem; border-radius: 6px; cursor: pointer; transition: all 0.2s ease;">
+                        ⚠️ Resetar Todo o Progresso
+                    </button>
+                </div>
             </div>
         </div>
     </section>
@@ -1391,6 +1397,37 @@
         }
 
         render();
+    }
+
+    // Botão de Reset Total
+    const resetGameBtn = document.getElementById('resetGameBtn');
+    if (resetGameBtn) {
+        resetGameBtn.addEventListener('click', () => {
+            if (confirm('Tem certeza que deseja resetar TODO o seu progresso (saldo, melhorias e estatísticas)?')) {
+                // Limpa storage local
+                localStorage.removeItem('makita_perm_upgrades');
+                localStorage.removeItem('makita_total_produced');
+                localStorage.removeItem('makita_local_state');
+
+                // Reseta estado na memória do cliente
+                makitas = 0;
+                mps = 0;
+                totalMakitasMade = 0;
+                prevMakitas = 0;
+                upgrades.forEach(u => { owned[u.id] = 0; });
+                permanentUpgrades.forEach(u => { u.purchased = false; });
+
+                if (socket && socket.readyState === WebSocket.OPEN) {
+                    socket.send('RESET');
+                }
+
+                if (isLocalMode) {
+                    serverClickPower = 1.0;
+                }
+
+                render();
+            }
+        });
     }
 
     buildShopList();

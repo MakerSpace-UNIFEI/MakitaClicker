@@ -139,6 +139,65 @@ void processBuy(String qtyStr) {
 void processPermBuy(String permId, int cost) {
   if (makitas < cost) return;
 
+void loadGameState() {
+  if (!LittleFS.exists("/gamestate.json")) return;
+  File f = LittleFS.open("/gamestate.json", "r");
+  if (!f) return;
+
+  StaticJsonDocument<512> doc;
+  DeserializationError err = deserializeJson(doc, f);
+  f.close();
+
+  if (!err) {
+    makitas = doc["makitas"] | 0.0;
+    ownedUpgrade1 = doc["ownedUpgrade1"] | 0;
+    permLubrificante = doc["permLubrificante"] | false;
+    permDiscoDiamante = doc["permDiscoDiamante"] | false;
+    permMotorBrushless = doc["permMotorBrushless"] | false;
+    permEmpunhadura = doc["permEmpunhadura"] | false;
+    permBateriaLitio = doc["permBateriaLitio"] | false;
+    permIaMaker = doc["permIaMaker"] | false;
+  }
+}
+
+void saveGameState() {
+  File f = LittleFS.open("/gamestate.json", "w");
+  if (!f) return;
+
+  StaticJsonDocument<512> doc;
+  doc["makitas"] = makitas;
+  doc["ownedUpgrade1"] = ownedUpgrade1;
+  doc["permLubrificante"] = permLubrificante;
+  doc["permDiscoDiamante"] = permDiscoDiamante;
+  doc["permMotorBrushless"] = permMotorBrushless;
+  doc["permEmpunhadura"] = permEmpunhadura;
+  doc["permBateriaLitio"] = permBateriaLitio;
+  doc["permIaMaker"] = permIaMaker;
+
+  serializeJson(doc, f);
+  f.close();
+}
+
+void resetGameState() {
+  makitas = 0.0;
+  ownedUpgrade1 = 0;
+  permLubrificante = false;
+  permDiscoDiamante = false;
+  permMotorBrushless = false;
+  permEmpunhadura = false;
+  permBateriaLitio = false;
+  permIaMaker = false;
+  
+  if (LittleFS.exists("/gamestate.json")) {
+    LittleFS.remove("/gamestate.json");
+  }
+  saveGameState();
+  broadcastState();
+}
+
+void processPermBuy(String permId, int cost) {
+  if (makitas < cost) return;
+
   bool bought = false;
   if (permId == "perm_lubrificante" && !permLubrificante) {
     permLubrificante = true; bought = true;
@@ -156,6 +215,7 @@ void processPermBuy(String permId, int cost) {
 
   if (bought) {
     makitas -= cost;
+    saveGameState();
     broadcastState();
   }
 }
@@ -169,9 +229,12 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
     
     if (msg == "CLICK") {
       handleClick();
+    } else if (msg == "RESET") {
+      resetGameState();
     } else if (msg.startsWith("BUY:upgrade1:")) {
       String qtyStr = msg.substring(13);
       processBuy(qtyStr);
+      saveGameState();
     } else if (msg.startsWith("PERM_BUY:")) {
       // Formato: PERM_BUY:<id>:<custo>
       int firstSep = msg.indexOf(':', 9);
@@ -292,8 +355,11 @@ void setup() {
   webSocket.begin();
   webSocket.onEvent(webSocketEvent);
 
+  loadGameState();
   notifyMega();
 }
+
+unsigned long lastSave = 0;
 
 void loop() {
   MDNS.update();
@@ -324,5 +390,11 @@ void loop() {
     if (getTotalMps() > 0) {
       broadcastState();
     }
+  }
+
+  // Autosave a cada 10 segundos
+  if (now - lastSave >= 10000) {
+    lastSave = now;
+    saveGameState();
   }
 }
