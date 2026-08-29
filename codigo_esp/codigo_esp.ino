@@ -188,9 +188,8 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
     // Tenta gravar a pagina com ate 3 tentativas (resiliencia a timing)
     bool pageOk = false;
     for (int retry = 0; retry < 3; retry++) {
-      // CMD_LOAD_ADDRESS (endereço em words de 16-bit com flag para >128KB)
+      // CMD_LOAD_ADDRESS (endereço em words de 16-bit)
       uint32_t wordAddr = currentAddr >> 1;
-      if (currentAddr >= 0x20000) wordAddr |= 0x80000000;
       uint8_t loadAddrCmd[] = {
         0x06,
         (uint8_t)((wordAddr >> 24) & 0xFF),
