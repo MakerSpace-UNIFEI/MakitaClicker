@@ -11,8 +11,8 @@
 #include <ArduinoJson.h>
 
 // ===== VERSÃO LOCAL (atualizar a cada release) =====
-#define CURRENT_FIRMWARE_VER 1
-#define CURRENT_FS_VER       2
+#define CURRENT_FIRMWARE_VER 2
+#define CURRENT_FS_VER       3
 
 const char* VERSION_URL = "https://makitaclicker.pages.dev/version.json";
 
