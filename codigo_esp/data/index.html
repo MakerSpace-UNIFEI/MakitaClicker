@@ -767,6 +767,8 @@
         logEl.textContent = '🛠️ Modo de Teste Local Ativo (Simulador do ESP)';
         logEl.style.color = 'var(--orange)';
 
+        loadLocalPermanentProgress();
+
         // Carrega estado salvo local para testes
         const savedState = localStorage.getItem('makita_local_state');
         if (savedState) {
@@ -855,10 +857,6 @@
                 isLocalMode = false;
                 logEl.textContent = 'Conectado à Oficina Global (ESP)!';
                 logEl.style.color = 'var(--text-lo)';
-                // Sincroniza compras salvas localmente com o ESP se necessário
-                permanentUpgrades.filter(u => u.purchased).forEach(u => {
-                    socket.send(`PERM_BUY:${u.id}:0`);
-                });
             };
 
             socket.onclose = () => {
@@ -1046,22 +1044,25 @@
     ];
 
     // Carrega progresso salvo de melhorias permanentes (localStorage)
-    const savedPerms = localStorage.getItem('makita_perm_upgrades');
-    if (savedPerms) {
-        try {
-            const list = JSON.parse(savedPerms);
-            permanentUpgrades.forEach(u => {
-                if (list.includes(u.id)) u.purchased = true;
-            });
-        } catch(e) {}
-    }
+    function loadLocalPermanentProgress() {
+        const savedPerms = localStorage.getItem('makita_perm_upgrades');
+        if (savedPerms) {
+            try {
+                const list = JSON.parse(savedPerms);
+                permanentUpgrades.forEach(u => {
+                    if (list.includes(u.id)) u.purchased = true;
+                });
+            } catch(e) {}
+        }
 
-    const savedTotal = localStorage.getItem('makita_total_produced');
-    if (savedTotal) {
-        totalMakitasMade = parseFloat(savedTotal) || 0;
+        const savedTotal = localStorage.getItem('makita_total_produced');
+        if (savedTotal) {
+            totalMakitasMade = parseFloat(savedTotal) || 0;
+        }
     }
 
     function savePermanentProgress() {
+        if (!isLocalMode) return;
         const purchasedIds = permanentUpgrades.filter(u => u.purchased).map(u => u.id);
         localStorage.setItem('makita_perm_upgrades', JSON.stringify(purchasedIds));
         localStorage.setItem('makita_total_produced', totalMakitasMade.toString());
@@ -1456,7 +1457,13 @@
         }
 
         if (typeof data.makitas === 'number') {
-            if (data.makitas > prevMakitas) {
+            if (data.makitas === 0 && prevMakitas > 0) {
+                // Reset detectado do servidor
+                totalMakitasMade = 0;
+                localStorage.removeItem('makita_total_produced');
+                localStorage.removeItem('makita_perm_upgrades');
+                localStorage.removeItem('makita_local_state');
+            } else if (data.makitas > prevMakitas) {
                 totalMakitasMade += (data.makitas - prevMakitas);
                 savePermanentProgress();
             }
@@ -1468,9 +1475,7 @@
         
         if (data.perms && typeof data.perms === 'object') {
             permanentUpgrades.forEach(u => {
-                if (data.perms[u.id] === true) {
-                    u.purchased = true;
-                }
+                u.purchased = (data.perms[u.id] === true);
             });
             savePermanentProgress();
         }

@@ -9,6 +9,7 @@
 #include <ESP8266HTTPClient.h>
 #include <ESP8266httpUpdate.h>
 #include <ArduinoJson.h>
+#include <EEPROM.h>
 
 // ===== VERSÃO LOCAL — gerenciado automaticamente pelo build.sh =====
 // NÃO edite manualmente. O Cloudflare Pages injeta o valor correto antes de compilar.
@@ -466,68 +467,152 @@ void processBuy(int index, String qtyStr) {
   broadcastState();
 }
 
+#define EEPROM_MAGIC 0x4D4B5432 // "MKT2"
+
+struct EEPROMState {
+  uint32_t magic;
+  double makitas;
+  uint8_t owned[NUM_UPGRADES]; // 13 upgrades
+  uint16_t perms; // bitmask para até 16 perms
+  uint8_t checksum;
+};
+
+uint8_t calcChecksum(const EEPROMState &s) {
+  const uint8_t *p = (const uint8_t*)&s;
+  uint8_t cs = 0;
+  for (size_t i = 0; i < sizeof(EEPROMState) - 1; i++) {
+    cs ^= p[i];
+  }
+  return cs;
+}
+
+void saveEEPROM() {
+  EEPROMState s;
+  s.magic = EEPROM_MAGIC;
+  s.makitas = makitas;
+  for (int i = 0; i < NUM_UPGRADES; i++) {
+    s.owned[i] = (uint8_t)ownedUpgrades[i];
+  }
+  s.perms = 0;
+  if (permLubrificante)    s.perms |= (1 << 0);
+  if (permDiscoDiamante)   s.perms |= (1 << 1);
+  if (permMotorBrushless)  s.perms |= (1 << 2);
+  if (permEmpunhadura)     s.perms |= (1 << 3);
+  if (permBateriaLitio)    s.perms |= (1 << 4);
+  if (permIaMaker)         s.perms |= (1 << 5);
+  if (permRefrigeracao)    s.perms |= (1 << 6);
+  if (permTitanio)         s.perms |= (1 << 7);
+  if (permOverclock)       s.perms |= (1 << 8);
+  if (permNanobots)        s.perms |= (1 << 9);
+  if (permSingularidade)   s.perms |= (1 << 10);
+  s.checksum = calcChecksum(s);
+
+  EEPROM.put(0, s);
+  EEPROM.commit();
+}
+
+bool loadEEPROM() {
+  EEPROMState s;
+  EEPROM.get(0, s);
+  if (s.magic != EEPROM_MAGIC) return false;
+  if (calcChecksum(s) != s.checksum) return false;
+
+  makitas = s.makitas;
+  for (int i = 0; i < NUM_UPGRADES; i++) {
+    ownedUpgrades[i] = s.owned[i];
+  }
+  permLubrificante   = (s.perms & (1 << 0)) != 0;
+  permDiscoDiamante  = (s.perms & (1 << 1)) != 0;
+  permMotorBrushless = (s.perms & (1 << 2)) != 0;
+  permEmpunhadura    = (s.perms & (1 << 3)) != 0;
+  permBateriaLitio   = (s.perms & (1 << 4)) != 0;
+  permIaMaker        = (s.perms & (1 << 5)) != 0;
+  permRefrigeracao   = (s.perms & (1 << 6)) != 0;
+  permTitanio        = (s.perms & (1 << 7)) != 0;
+  permOverclock      = (s.perms & (1 << 8)) != 0;
+  permNanobots       = (s.perms & (1 << 9)) != 0;
+  permSingularidade  = (s.perms & (1 << 10)) != 0;
+  return true;
+}
+
 void loadGameState() {
-  if (!LittleFS.exists("/gamestate.json")) return;
-  File f = LittleFS.open("/gamestate.json", "r");
-  if (!f) return;
+  bool loadedFromFS = false;
+  if (LittleFS.exists("/gamestate.json")) {
+    File f = LittleFS.open("/gamestate.json", "r");
+    if (f) {
+      StaticJsonDocument<1024> doc;
+      DeserializationError err = deserializeJson(doc, f);
+      f.close();
 
-  StaticJsonDocument<1024> doc;
-  DeserializationError err = deserializeJson(doc, f);
-  f.close();
+      if (!err) {
+        makitas = doc["makitas"] | 0.0;
+        
+        JsonObject ownedObj = doc["owned"];
+        if (!ownedObj.isNull()) {
+          for (int i = 0; i < NUM_UPGRADES; i++) {
+            ownedUpgrades[i] = ownedObj[UPGRADE_CONFIGS[i].id] | 0;
+          }
+        } else {
+          // Compatibilidade retroativa com chave antiga
+          ownedUpgrades[0] = doc["ownedUpgrade1"] | 0;
+        }
 
-  if (!err) {
-    makitas = doc["makitas"] | 0.0;
-    
-    JsonObject ownedObj = doc["owned"];
-    if (!ownedObj.isNull()) {
-      for (int i = 0; i < NUM_UPGRADES; i++) {
-        ownedUpgrades[i] = ownedObj[UPGRADE_CONFIGS[i].id] | 0;
+        permLubrificante   = doc["permLubrificante"] | false;
+        permDiscoDiamante  = doc["permDiscoDiamante"] | false;
+        permMotorBrushless = doc["permMotorBrushless"] | false;
+        permEmpunhadura    = doc["permEmpunhadura"] | false;
+        permBateriaLitio   = doc["permBateriaLitio"] | false;
+        permIaMaker        = doc["permIaMaker"] | false;
+        permRefrigeracao   = doc["permRefrigeracao"] | false;
+        permTitanio        = doc["permTitanio"] | false;
+        permOverclock      = doc["permOverclock"] | false;
+        permNanobots       = doc["permNanobots"] | false;
+        permSingularidade  = doc["permSingularidade"] | false;
+        loadedFromFS = true;
+        Serial.printf("[STATE] Carregado do LittleFS: Makitas=%.1f\n", makitas);
       }
-    } else {
-      // Compatibilidade retroativa com chave antiga
-      ownedUpgrades[0] = doc["ownedUpgrade1"] | 0;
     }
+  }
 
-    permLubrificante = doc["permLubrificante"] | false;
-    permDiscoDiamante = doc["permDiscoDiamante"] | false;
-    permMotorBrushless = doc["permMotorBrushless"] | false;
-    permEmpunhadura = doc["permEmpunhadura"] | false;
-    permBateriaLitio = doc["permBateriaLitio"] | false;
-    permIaMaker = doc["permIaMaker"] | false;
-    permRefrigeracao = doc["permRefrigeracao"] | false;
-    permTitanio = doc["permTitanio"] | false;
-    permOverclock = doc["permOverclock"] | false;
-    permNanobots = doc["permNanobots"] | false;
-    permSingularidade = doc["permSingularidade"] | false;
+  if (!loadedFromFS) {
+    if (loadEEPROM()) {
+      Serial.printf("[STATE] Carregado do backup EEPROM: Makitas=%.1f\n", makitas);
+      saveGameState(); // Restaura imediatamente para o LittleFS
+    } else {
+      Serial.println("[STATE] Nenhum estado anterior encontrado (inicio zerado).");
+    }
   }
 }
 
 void saveGameState() {
   File f = LittleFS.open("/gamestate.json", "w");
-  if (!f) return;
+  if (f) {
+    StaticJsonDocument<1024> doc;
+    doc["makitas"] = makitas;
+    
+    JsonObject ownedObj = doc.createNestedObject("owned");
+    for (int i = 0; i < NUM_UPGRADES; i++) {
+      ownedObj[UPGRADE_CONFIGS[i].id] = ownedUpgrades[i];
+    }
 
-  StaticJsonDocument<1024> doc;
-  doc["makitas"] = makitas;
-  
-  JsonObject ownedObj = doc.createNestedObject("owned");
-  for (int i = 0; i < NUM_UPGRADES; i++) {
-    ownedObj[UPGRADE_CONFIGS[i].id] = ownedUpgrades[i];
+    doc["permLubrificante"]   = permLubrificante;
+    doc["permDiscoDiamante"]  = permDiscoDiamante;
+    doc["permMotorBrushless"] = permMotorBrushless;
+    doc["permEmpunhadura"]    = permEmpunhadura;
+    doc["permBateriaLitio"]   = permBateriaLitio;
+    doc["permIaMaker"]        = permIaMaker;
+    doc["permRefrigeracao"]   = permRefrigeracao;
+    doc["permTitanio"]        = permTitanio;
+    doc["permOverclock"]      = permOverclock;
+    doc["permNanobots"]       = permNanobots;
+    doc["permSingularidade"]  = permSingularidade;
+
+    serializeJson(doc, f);
+    f.flush();
+    f.close();
   }
 
-  doc["permLubrificante"] = permLubrificante;
-  doc["permDiscoDiamante"] = permDiscoDiamante;
-  doc["permMotorBrushless"] = permMotorBrushless;
-  doc["permEmpunhadura"] = permEmpunhadura;
-  doc["permBateriaLitio"] = permBateriaLitio;
-  doc["permIaMaker"] = permIaMaker;
-  doc["permRefrigeracao"] = permRefrigeracao;
-  doc["permTitanio"] = permTitanio;
-  doc["permOverclock"] = permOverclock;
-  doc["permNanobots"] = permNanobots;
-  doc["permSingularidade"] = permSingularidade;
-
-  serializeJson(doc, f);
-  f.close();
+  saveEEPROM();
 }
 
 void resetGameState() {
@@ -552,6 +637,7 @@ void resetGameState() {
   }
   saveGameState();
   broadcastState();
+  Serial.println("[STATE] Progresso resetado com sucesso.");
 }
 
 void processPermBuy(String permId, int cost) {
@@ -566,7 +652,7 @@ void processPermBuy(String permId, int cost) {
     permMotorBrushless = true; bought = true;
   } else if (permId == "perm_empunhadura" && !permEmpunhadura && permDiscoDiamante) {
     permEmpunhadura = true; bought = true;
-  } else if (permId == "perm_bateria_lítio" && !permBateriaLitio && permMotorBrushless) {
+  } else if ((permId == "perm_bateria_lítio" || permId == "perm_bateria_litio") && !permBateriaLitio && permMotorBrushless) {
     permBateriaLitio = true; bought = true;
   } else if (permId == "perm_ia_maker" && !permIaMaker && permBateriaLitio) {
     permIaMaker = true; bought = true;
@@ -698,10 +784,14 @@ void setup() {
   // Inicializa o pino de reset do Mega em modo Open-Drain (alta impedancia)
   pinMode(MEGA_RESET_PIN, INPUT);
 
+  EEPROM.begin(64);
+
   if (!LittleFS.begin()) {
-    Serial.println("Erro LittleFS");
-    return;
+    Serial.println("[FS] Erro ao montar LittleFS");
   }
+
+  // Carrega estado imediatamente da flash/EEPROM antes de qualquer conexão ou OTA
+  loadGameState();
 
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
@@ -714,6 +804,9 @@ void setup() {
 
   // Checa e aplica OTA antes de subir os serviços
   checkOTA();
+
+  // Garante que o estado (mantido em RAM/EEPROM) seja regravado no LittleFS caso o FS tenha sido atualizado por OTA
+  saveGameState();
 
   // Reinicia o Arduino Mega para sincronizar inicializacao e LCD
   resetMega();
@@ -748,7 +841,6 @@ void setup() {
   webSocket.begin();
   webSocket.onEvent(webSocketEvent);
 
-  loadGameState();
   notifyMega();
 }
 
@@ -785,9 +877,11 @@ void loop() {
     }
   }
 
-  // Autosave a cada 10 segundos
-  if (now - lastSave >= 10000) {
+  // Autosave a cada 5 segundos se houver saldo ou produção
+  if (now - lastSave >= 5000) {
     lastSave = now;
-    saveGameState();
+    if (getTotalMps() > 0 || makitas > 0) {
+      saveGameState();
+    }
   }
 }
