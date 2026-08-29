@@ -62,10 +62,11 @@ AVR_OBJCOPY=$(find /opt/buildhome/.arduino15 /root/.arduino15 "$HOME/.arduino15"
 
 if [ -n "$AVR_OBJCOPY" ]; then
   echo "[DEBUG] avr-objcopy encontrado em: $AVR_OBJCOPY"
-  HEX_FILE=$(find ./build_mega -name "*.hex" -type f 2>/dev/null | head -n 1)
+  HEX_FILE=$(find ./build_mega -name "*.hex" ! -name "*with_bootloader*" -type f 2>/dev/null | head -n 1)
   if [ -n "$HEX_FILE" ]; then
+    echo "[DEBUG] Convertendo $HEX_FILE para binario..."
     "$AVR_OBJCOPY" -I ihex -O binary "$HEX_FILE" ./online/mega.bin
-    echo "[DEBUG] mega.bin gerado com sucesso."
+    echo "[DEBUG] mega.bin gerado com sucesso (tamanho: $(wc -c < ./online/mega.bin) bytes)."
   else
     echo "[ERRO] Arquivo .hex do Mega nao encontrado!"
     exit 1

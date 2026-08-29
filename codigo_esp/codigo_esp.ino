@@ -218,6 +218,9 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
   uint8_t progPayload[10 + PAGE_SIZE];
 
   while (currentAddr < (uint32_t)written) {
+    ESP.wdtFeed();
+    yield();
+
     uint16_t toRead = min((uint32_t)PAGE_SIZE, (uint32_t)(written - currentAddr));
     size_t bytesRead = f.read(pageBuffer, toRead);
 
@@ -227,6 +230,7 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
 
     bool pageOk = false;
     for (int retry = 0; retry < 5; retry++) {
+      ESP.wdtFeed();
       // CMD_LOAD_ADDRESS (endereço em words de 16-bit)
       uint32_t wordAddr = currentAddr >> 1;
       uint8_t loadAddrCmd[] = {
@@ -580,6 +584,7 @@ void checkOTA() {
 }
 
 void setup() {
+  system_update_cpu_freq(160); // 160MHz para máxima precisão de baud rate na SoftwareSerial
   Serial.begin(115200);
   megaSerial.begin(115200);
 
