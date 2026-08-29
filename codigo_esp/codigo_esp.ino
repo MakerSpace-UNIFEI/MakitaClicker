@@ -35,6 +35,14 @@ const int baseCostUpgrade1 = 10;
 const float growthUpgrade1 = 1.10;
 const float mpsUpgrade1 = 0.1;
 
+// Melhorias permanentes ativas
+bool permLubrificante = false;   // +10% MPS global
+bool permDiscoDiamante = false;  // +1.0 poder de clique
+bool permMotorBrushless = false; // +100% (2x) ganho base das oficinas
+bool permEmpunhadura = false;    // clique manual gera +5% do MPS atual
+bool permBateriaLitio = false;   // +25% MPS global
+bool permIaMaker = false;        // +50% MPS global
+
 unsigned long lastTick = 0;
 unsigned long lastBroadcast = 0;
 
@@ -42,17 +50,39 @@ int unitCost(int count) {
   return ceil(baseCostUpgrade1 * pow(growthUpgrade1, count));
 }
 
-float getTotalMps() {
-  return ownedUpgrade1 * mpsUpgrade1;
+float getClickPower() {
+  float power = 1.0;
+  if (permDiscoDiamante) power += 1.0;
+  return power;
 }
 
-// JSON compatível com o novo index.html
+float getTotalMps() {
+  float baseMps = ownedUpgrade1 * mpsUpgrade1;
+  if (permMotorBrushless) baseMps *= 2.0; // Dobra o ganho base das oficinas
+  
+  float multiplier = 1.0;
+  if (permLubrificante) multiplier += 0.10;
+  if (permBateriaLitio) multiplier += 0.25;
+  if (permIaMaker) multiplier += 0.50;
+
+  return baseMps * multiplier;
+}
+
+// JSON compatível com o index.html
 String getGameStateJSON() {
   String json = "{";
   json += "\"makitas\":" + String(makitas, 1) + ",";
   json += "\"mps\":" + String(getTotalMps(), 1) + ",";
-  json += "\"owned\":{\"upgrade1\":" + String(ownedUpgrade1) + "}";
-  json += "}";
+  json += "\"clickPower\":" + String(getClickPower(), 1) + ",";
+  json += "\"owned\":{\"upgrade1\":" + String(ownedUpgrade1) + "},";
+  json += "\"perms\":{";
+  json += "\"perm_lubrificante\":" + String(permLubrificante ? "true" : "false") + ",";
+  json += "\"perm_disco_diamante\":" + String(permDiscoDiamante ? "true" : "false") + ",";
+  json += "\"perm_motor_brushless\":" + String(permMotorBrushless ? "true" : "false") + ",";
+  json += "\"perm_empunhadura\":" + String(permEmpunhadura ? "true" : "false") + ",";
+  json += "\"perm_bateria_lítio\":" + String(permBateriaLitio ? "true" : "false") + ",";
+  json += "\"perm_ia_maker\":" + String(permIaMaker ? "true" : "false");
+  json += "}}";
   return json;
 }
 
@@ -65,6 +95,15 @@ void broadcastState() {
   String state = getGameStateJSON();
   webSocket.broadcastTXT(state);
   notifyMega();
+}
+
+void handleClick() {
+  float gain = getClickPower();
+  if (permEmpunhadura) {
+    gain += (getTotalMps() * 0.05);
+  }
+  makitas += gain;
+  broadcastState();
 }
 
 // Processa a compra considerando 1, 10 ou MAX
@@ -97,6 +136,30 @@ void processBuy(String qtyStr) {
   broadcastState();
 }
 
+void processPermBuy(String permId, int cost) {
+  if (makitas < cost) return;
+
+  bool bought = false;
+  if (permId == "perm_lubrificante" && !permLubrificante) {
+    permLubrificante = true; bought = true;
+  } else if (permId == "perm_disco_diamante" && !permDiscoDiamante && permLubrificante) {
+    permDiscoDiamante = true; bought = true;
+  } else if (permId == "perm_motor_brushless" && !permMotorBrushless && permLubrificante) {
+    permMotorBrushless = true; bought = true;
+  } else if (permId == "perm_empunhadura" && !permEmpunhadura && permDiscoDiamante) {
+    permEmpunhadura = true; bought = true;
+  } else if (permId == "perm_bateria_lítio" && !permBateriaLitio && permMotorBrushless) {
+    permBateriaLitio = true; bought = true;
+  } else if (permId == "perm_ia_maker" && !permIaMaker && permBateriaLitio) {
+    permIaMaker = true; bought = true;
+  }
+
+  if (bought) {
+    makitas -= cost;
+    broadcastState();
+  }
+}
+
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
   if (type == WStype_CONNECTED) {
     String state = getGameStateJSON();
@@ -105,8 +168,7 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
     String msg = String((char*)payload);
     
     if (msg == "CLICK") {
-      makitas += 1.0;
-      broadcastState();
+      handleClick();
     } else if (msg.startsWith("BUY:upgrade1:")) {
       String qtyStr = msg.substring(13);
       processBuy(qtyStr);
@@ -114,11 +176,9 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
       // Formato: PERM_BUY:<id>:<custo>
       int firstSep = msg.indexOf(':', 9);
       if (firstSep != -1) {
+        String permId = msg.substring(9, firstSep);
         int cost = msg.substring(firstSep + 1).toInt();
-        if (cost > 0 && makitas >= cost) {
-          makitas -= cost;
-          broadcastState();
-        }
+        processPermBuy(permId, cost);
       }
     }
   }
@@ -243,8 +303,7 @@ void loop() {
     String cmd = megaSerial.readStringUntil('\n');
     cmd.trim();
     if (cmd == "CLICK") {
-      makitas += 1.0;
-      broadcastState();
+      handleClick();
     }
   }
 

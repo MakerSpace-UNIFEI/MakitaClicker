@@ -749,8 +749,14 @@
     // servidor que fale o mesmo protocolo na mesma rede).
     const socket = new WebSocket('ws://' + window.location.hostname + ':81/');
 
+    let serverClickPower = 1.0;
+
     socket.onopen = () => {
         logEl.textContent = 'Conectado à Oficina Global!';
+        // Sincroniza compras salvas localmente com o ESP se necessário
+        permanentUpgrades.filter(u => u.purchased).forEach(u => {
+            socket.send(`PERM_BUY:${u.id}:0`);
+        });
     };
 
     socket.onclose = () => {
@@ -1156,11 +1162,16 @@
         statMpsEl.textContent = mps.toFixed(1);
 
         // Calcula poder de clique com bônus de melhorias permanentes
-        let clickPower = 1.0;
+        let clickPower = serverClickPower || 1.0;
         if (permanentUpgrades.find(u => u.id === 'perm_disco_diamante')?.purchased) {
-            clickPower += 1.0;
+            clickPower = Math.max(clickPower, 2.0);
         }
-        statClickPowerEl.textContent = clickPower.toFixed(1);
+        if (permanentUpgrades.find(u => u.id === 'perm_empunhadura')?.purchased) {
+            const extra = (mps * 0.05);
+            statClickPowerEl.textContent = `${clickPower.toFixed(1)} (+${extra.toFixed(1)}/s)`;
+        } else {
+            statClickPowerEl.textContent = clickPower.toFixed(1);
+        }
 
         const purchasedCount = permanentUpgrades.filter(u => u.purchased).length;
         statPermCountEl.textContent = `${purchasedCount}/${permanentUpgrades.length}`;
@@ -1190,7 +1201,7 @@
         const areaRect = clickArea.getBoundingClientRect();
         const el = document.createElement('span');
         el.className = 'float-plus';
-        el.textContent = '+' + amount;
+        el.textContent = '+' + (amount % 1 === 0 ? amount : amount.toFixed(1));
         el.style.left = (rect.left - areaRect.left + rect.width / 2) + 'px';
         el.style.top = (rect.top - areaRect.top) + 'px';
         clickArea.appendChild(el);
@@ -1245,9 +1256,12 @@
 
     // feedback visual instantâneo do clique — não mexe em `makitas`/`mps`
     function playClickFeedback() {
-        let gain = 1;
+        let gain = serverClickPower || 1.0;
         if (permanentUpgrades.find(u => u.id === 'perm_disco_diamante')?.purchased) {
-            gain += 1;
+            gain = Math.max(gain, 2.0);
+        }
+        if (permanentUpgrades.find(u => u.id === 'perm_empunhadura')?.purchased) {
+            gain += (mps * 0.05);
         }
         showFloatPlus(gain);
         spawnFlyingMakita();
@@ -1280,6 +1294,17 @@
             makitas = data.makitas;
         }
         if (typeof data.mps === 'number') mps = data.mps;
+        if (typeof data.clickPower === 'number') serverClickPower = data.clickPower;
+        
+        if (data.perms && typeof data.perms === 'object') {
+            permanentUpgrades.forEach(u => {
+                if (data.perms[u.id] === true) {
+                    u.purchased = true;
+                }
+            });
+            savePermanentProgress();
+        }
+
         if (data.owned && typeof data.owned === 'object') {
             upgrades.forEach(upgrade => {
                 if (upgrade.id in data.owned) {
