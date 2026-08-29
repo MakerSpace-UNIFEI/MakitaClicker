@@ -26,13 +26,20 @@ arduino-cli compile --fqbn esp8266:esp8266:nodemcuv2 \
 mv ./online/*.bin ./online/firmware.bin || true
 
 echo "=== [5/5] Gerando Imagem do LittleFS ==="
-MKLITTLEFS_BIN=$(find /root/.arduino15 -name mklittlefs 2>/dev/null | head -n 1 || find ~/.arduino15 -name mklittlefs 2>/dev/null | head -n 1)
+echo "[DEBUG] HOME=$HOME, buscando mklittlefs..."
+
+MKLITTLEFS_BIN=$(find /opt/buildhome/.arduino15 /root/.arduino15 "$HOME/.arduino15" \
+  -name mklittlefs -type f 2>/dev/null | head -n 1)
+
+echo "[DEBUG] mklittlefs encontrado em: $MKLITTLEFS_BIN"
 
 if [ -n "$MKLITTLEFS_BIN" ]; then
   # 2072576 bytes = 2MB de particao FS para Flash de 4MB
-  $MKLITTLEFS_BIN -c "$SKETCH_DIR/data" -p 256 -b 8192 -s 2072576 ./online/littlefs.bin
+  "$MKLITTLEFS_BIN" -c "$SKETCH_DIR/data" -p 256 -b 8192 -s 2072576 ./online/littlefs.bin
 else
-  echo "[ERRO] mklittlefs nao encontrado!"
+  echo "[ERRO] mklittlefs nao encontrado! Listando .arduino15:"
+  find /opt/buildhome/.arduino15 /root/.arduino15 "$HOME/.arduino15" \
+    -name "mklittlefs*" 2>/dev/null || true
   exit 1
 fi
 
