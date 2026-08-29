@@ -109,6 +109,16 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
     } else if (msg.startsWith("BUY:upgrade1:")) {
       String qtyStr = msg.substring(13);
       processBuy(qtyStr);
+    } else if (msg.startsWith("PERM_BUY:")) {
+      // Formato: PERM_BUY:<id>:<custo>
+      int firstSep = msg.indexOf(':', 9);
+      if (firstSep != -1) {
+        int cost = msg.substring(firstSep + 1).toInt();
+        if (cost > 0 && makitas >= cost) {
+          makitas -= cost;
+          broadcastState();
+        }
+      }
     }
   }
 }

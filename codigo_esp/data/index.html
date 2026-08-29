@@ -211,6 +211,7 @@
         .center-nav {
             display: flex;
             border-bottom: 1px solid var(--panel-edge);
+            background: var(--panel);
         }
 
         .navbtn {
@@ -221,7 +222,20 @@
             font-size: .75rem;
             letter-spacing: .03em;
             padding: .65rem 1.1rem;
-            cursor: default;
+            cursor: pointer;
+            transition: background 0.15s ease, color 0.15s ease;
+        }
+
+        .navbtn:hover:not(.is-active) {
+            background: var(--panel-alt);
+            color: var(--text-hi);
+        }
+
+        .navbtn.is-active {
+            background: var(--panel-alt);
+            color: var(--orange);
+            font-weight: 600;
+            border-bottom: 2px solid var(--orange);
         }
 
         .center-log {
@@ -235,6 +249,207 @@
 
         .center-body {
             flex: 1;
+            position: relative;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .tab-pane {
+            display: none;
+            padding: 1.25rem;
+            flex: 1;
+        }
+
+        .tab-pane.is-active {
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ===== Melhorias Permanentes / Skill Tree ===== */
+        .perm-tree-header {
+            margin-bottom: 1.2rem;
+        }
+
+        .perm-tree-title {
+            margin: 0 0 0.3rem 0;
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: var(--orange);
+        }
+
+        .perm-tree-subtitle {
+            margin: 0;
+            font-size: 0.78rem;
+            color: var(--text-lo);
+        }
+
+        .perm-tree-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 1rem;
+            position: relative;
+        }
+
+        .perm-node {
+            background: var(--panel);
+            border: 1px solid var(--panel-edge);
+            border-radius: 8px;
+            padding: 0.9rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.6rem;
+            position: relative;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .perm-node.status-locked {
+            opacity: 0.45;
+            filter: grayscale(0.8);
+            border-style: dashed;
+        }
+
+        .perm-node.status-available {
+            border-color: var(--orange-dim);
+            background: #1c1917;
+        }
+
+        .perm-node.status-available:hover {
+            border-color: var(--orange);
+            box-shadow: 0 0 12px rgba(255, 143, 67, 0.2);
+            transform: translateY(-2px);
+        }
+
+        .perm-node.status-purchased {
+            border-color: #2e7d32;
+            background: #0f1e13;
+        }
+
+        .perm-node__top {
+            display: flex;
+            align-items: center;
+            gap: 0.65rem;
+        }
+
+        .perm-node__icon {
+            font-size: 1.4rem;
+            width: 2.2rem;
+            height: 2.2rem;
+            border-radius: 6px;
+            background: var(--lcd-bg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid var(--panel-edge);
+        }
+
+        .perm-node__title-wrap {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .perm-node__name {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-hi);
+            display: block;
+        }
+
+        .perm-node__badge {
+            font-size: 0.65rem;
+            font-family: var(--mono);
+            padding: 0.1rem 0.4rem;
+            border-radius: 4px;
+            display: inline-block;
+            margin-top: 0.2rem;
+            font-weight: 600;
+        }
+
+        .perm-node.status-purchased .perm-node__badge {
+            background: #1b5e20;
+            color: #a5d6a7;
+        }
+
+        .perm-node.status-available .perm-node__badge {
+            background: #b0672f;
+            color: #ffe0b2;
+        }
+
+        .perm-node.status-locked .perm-node__badge {
+            background: #2a2a2a;
+            color: var(--text-faint);
+        }
+
+        .perm-node__desc {
+            font-size: 0.72rem;
+            color: var(--text-lo);
+            line-height: 1.35;
+        }
+
+        .perm-node__reqs {
+            font-size: 0.67rem;
+            font-family: var(--mono);
+            color: var(--orange-dim);
+            background: rgba(0, 0, 0, 0.3);
+            padding: 0.35rem 0.5rem;
+            border-radius: 4px;
+            border-left: 2px solid var(--orange-dim);
+        }
+
+        .perm-node__btn {
+            background: var(--red);
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            padding: 0.45rem 0.6rem;
+            font-family: var(--mono);
+            font-size: 0.75rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background 0.15s ease, opacity 0.15s ease;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .perm-node__btn:hover:not(:disabled) {
+            background: #ff5e5d;
+        }
+
+        .perm-node__btn:disabled {
+            background: #333;
+            color: #777;
+            cursor: default;
+        }
+
+        /* ===== Painel de Estatísticas ===== */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 0.85rem;
+        }
+
+        .stat-card {
+            background: var(--panel);
+            border: 1px solid var(--panel-edge);
+            border-radius: 8px;
+            padding: 0.9rem 1.1rem;
+        }
+
+        .stat-card__label {
+            font-size: 0.72rem;
+            color: var(--text-faint);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.3rem;
+        }
+
+        .stat-card__val {
+            font-family: var(--mono);
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: var(--orange);
         }
 
         /* ---------- right: shop ---------- */
@@ -432,10 +647,46 @@
     <!-- ===== centro: navegação + log ===== -->
     <section class="col-center">
         <div class="center-nav">
-            <button class="navbtn">Estatísticas</button>
+            <button class="navbtn is-active" id="tabBtnPerm" data-tab="tab-perm">Melhorias Permanentes</button>
+            <button class="navbtn" id="tabBtnStats" data-tab="tab-stats">Estatísticas</button>
         </div>
         <div class="center-log" id="log">Conectando ao servidor do ESP32...</div>
-        <div class="center-body stripes"></div>
+        <div class="center-body stripes">
+            <!-- Aba 1: Melhorias Permanentes (Skill Tree) -->
+            <div class="tab-pane is-active" id="tab-perm">
+                <div class="perm-tree-header">
+                    <h3 class="perm-tree-title">Árvore de Habilidades & Tecnologias</h3>
+                    <p class="perm-tree-subtitle">Desbloqueie melhorias permanentes produzindo makitas e evoluindo sua tecnologia.</p>
+                </div>
+                <div class="perm-tree-grid" id="permTreeGrid"></div>
+            </div>
+
+            <!-- Aba 2: Estatísticas -->
+            <div class="tab-pane" id="tab-stats">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-card__label">Makitas Atuais</div>
+                        <div class="stat-card__val" id="statMakitas">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-card__label">Total Histórico (Produzido)</div>
+                        <div class="stat-card__val" id="statTotalMakitas">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-card__label">Produção Passiva (MPS)</div>
+                        <div class="stat-card__val" id="statMps">0.0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-card__label">Poder por Clique</div>
+                        <div class="stat-card__val" id="statClickPower">1.0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-card__label">Melhorias Desbloqueadas</div>
+                        <div class="stat-card__val" id="statPermCount">0/0</div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </section>
 
     <!-- ===== direita: loja ===== -->
@@ -564,6 +815,119 @@
     const shopListEl = document.getElementById('shopList');
     const shopQtyEl = document.getElementById('shopQty');
     const logEl = document.getElementById('log');
+    const permTreeGridEl = document.getElementById('permTreeGrid');
+
+    // Elementos de estatísticas
+    const statMakitasEl = document.getElementById('statMakitas');
+    const statTotalMakitasEl = document.getElementById('statTotalMakitas');
+    const statMpsEl = document.getElementById('statMps');
+    const statClickPowerEl = document.getElementById('statClickPower');
+    const statPermCountEl = document.getElementById('statPermCount');
+
+    // Total de makitas acumuladas na sessão / histórico
+    let totalMakitasMade = 0;
+    let prevMakitas = 0;
+
+    // ---------- ÁRVORE DE MELHORIAS PERMANENTES ----------
+    // Requisitos:
+    //  - reqMakitas: quantidade mínima de makitas totais produzidas ou no saldo para REVELAR/comprar
+    //  - reqUpgrade: ID de upgrade pré-requisito (precisa ter sido comprado antes)
+    const permanentUpgrades = [
+        {
+            id: 'perm_lubrificante',
+            name: 'Óleo Sintético Premium',
+            icon: '🛢️',
+            cost: 25,
+            reqMakitas: 10,
+            reqUpgrade: null,
+            desc: 'Reduz o atrito dos motores. Aumenta a velocidade de fabricação em +10%.',
+            purchased: false
+        },
+        {
+            id: 'perm_disco_diamante',
+            name: 'Disco Diamantado Reforçado',
+            icon: '💠',
+            cost: 100,
+            reqMakitas: 50,
+            reqUpgrade: 'perm_lubrificante',
+            desc: 'Cortes ultra afiados. Aumenta o poder de clique manual em +1 por clique.',
+            purchased: false
+        },
+        {
+            id: 'perm_motor_brushless',
+            name: 'Motor Brushless Industrial',
+            icon: '⚡',
+            cost: 300,
+            reqMakitas: 150,
+            reqUpgrade: 'perm_lubrificante',
+            desc: 'Motores sem escova de alta eficiência. Dobra o ganho base de todas as oficinas.',
+            purchased: false
+        },
+        {
+            id: 'perm_empunhadura',
+            name: 'Empunhadura Ergonômica Pro',
+            icon: '🧤',
+            cost: 600,
+            reqMakitas: 250,
+            reqUpgrade: 'perm_disco_diamante',
+            desc: 'Menor fadiga ao operar. Cliques manuais geram 5% do MPS atual instantaneamente.',
+            purchased: false
+        },
+        {
+            id: 'perm_bateria_lítio',
+            name: 'Bateria Makita 40V Max XGT',
+            icon: '🔋',
+            cost: 1500,
+            reqMakitas: 600,
+            reqUpgrade: 'perm_motor_brushless',
+            desc: 'Alimentação contínua de lítio. +25% de produção permanente em todas as fontes.',
+            purchased: false
+        },
+        {
+            id: 'perm_ia_maker',
+            name: 'MakerBot Autônomo com IA',
+            icon: '🤖',
+            cost: 5000,
+            reqMakitas: 2000,
+            reqUpgrade: 'perm_bateria_lítio',
+            desc: 'Automação inteligente de fabricação. Aumenta a produção global em +50%.',
+            purchased: false
+        }
+    ];
+
+    // Carrega progresso salvo de melhorias permanentes (localStorage)
+    const savedPerms = localStorage.getItem('makita_perm_upgrades');
+    if (savedPerms) {
+        try {
+            const list = JSON.parse(savedPerms);
+            permanentUpgrades.forEach(u => {
+                if (list.includes(u.id)) u.purchased = true;
+            });
+        } catch(e) {}
+    }
+
+    const savedTotal = localStorage.getItem('makita_total_produced');
+    if (savedTotal) {
+        totalMakitasMade = parseFloat(savedTotal) || 0;
+    }
+
+    function savePermanentProgress() {
+        const purchasedIds = permanentUpgrades.filter(u => u.purchased).map(u => u.id);
+        localStorage.setItem('makita_perm_upgrades', JSON.stringify(purchasedIds));
+        localStorage.setItem('makita_total_produced', totalMakitasMade.toString());
+    }
+
+    // ---------- CONTROLE DE ABAS ----------
+    const tabBtns = document.querySelectorAll('.center-nav .navbtn');
+    tabBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const targetTab = btn.dataset.tab;
+            tabBtns.forEach(b => b.classList.toggle('is-active', b === btn));
+            document.querySelectorAll('.tab-pane').forEach(pane => {
+                pane.classList.toggle('is-active', pane.id === targetTab);
+            });
+        });
+    });
 
     // custo de UMA unidade adicional, já tendo comprado `count` unidades antes
     function unitCost(upgrade, count) {
@@ -666,6 +1030,142 @@
         }
     }
 
+    // Compra de Melhoria Permanente na Skill Tree
+    function buyPermanentUpgrade(perm) {
+        if (perm.purchased) return;
+        if (makitas < perm.cost) return;
+
+        // Verifica pré-requisito
+        if (perm.reqUpgrade) {
+            const req = permanentUpgrades.find(u => u.id === perm.reqUpgrade);
+            if (req && !req.purchased) return;
+        }
+
+        perm.purchased = true;
+        savePermanentProgress();
+
+        // Envia requisição de dedução de custo se conectado ao ESP32
+        if (socket.readyState === WebSocket.OPEN) {
+            socket.send(`PERM_BUY:${perm.id}:${perm.cost}`);
+        }
+
+        render();
+    }
+
+    // Renderiza a árvore de melhorias permanentes
+    function renderPermTree() {
+        permTreeGridEl.innerHTML = '';
+
+        permanentUpgrades.forEach(perm => {
+            // Verifica se o pré-requisito de upgrade anterior foi atendido
+            let reqUpgradeMet = true;
+            let reqUpgradeName = '';
+            if (perm.reqUpgrade) {
+                const parent = permanentUpgrades.find(u => u.id === perm.reqUpgrade);
+                if (parent) {
+                    reqUpgradeName = parent.name;
+                    reqUpgradeMet = parent.purchased;
+                }
+            }
+
+            // Uma melhoria é REVELADA se:
+            // 1. Atingiu a quantidade mínima de makitas OU
+            // 2. O upgrade pré-requisito foi comprado OU
+            // 3. Já está comprada
+            const isRevealed = perm.purchased || reqUpgradeMet || (totalMakitasMade >= perm.reqMakitas) || (makitas >= perm.reqMakitas);
+
+            if (!isRevealed) {
+                // Bloco oculto/bloqueado estilo névoa de guerra
+                const lockedNode = document.createElement('div');
+                lockedNode.className = 'perm-node status-locked';
+                lockedNode.innerHTML = `
+                    <div class="perm-node__top">
+                        <div class="perm-node__icon">🔒</div>
+                        <div class="perm-node__title-wrap">
+                            <span class="perm-node__name">Tecnologia Oculta</span>
+                            <span class="perm-node__badge">Bloqueado</span>
+                        </div>
+                    </div>
+                    <div class="perm-node__desc">Produza mais makitas ou desbloqueie tecnologias anteriores para revelar esta melhoria.</div>
+                    <div class="perm-node__reqs">Requer: ${perm.reqMakitas} makitas acumuladas</div>
+                `;
+                permTreeGridEl.appendChild(lockedNode);
+                return;
+            }
+
+            // Status do nó
+            let statusClass = 'status-available';
+            let badgeText = 'Disponível';
+            let isPurchasable = reqUpgradeMet && (makitas >= perm.cost) && !perm.purchased;
+
+            if (perm.purchased) {
+                statusClass = 'status-purchased';
+                badgeText = 'Adquirido ✓';
+            } else if (!reqUpgradeMet) {
+                statusClass = 'status-locked';
+                badgeText = 'Requisito Pendente';
+            }
+
+            const node = document.createElement('div');
+            node.className = `perm-node ${statusClass}`;
+            
+            let reqsHtml = '';
+            if (perm.reqUpgrade && !reqUpgradeMet) {
+                reqsHtml = `<div class="perm-node__reqs">Pré-requisito: ${reqUpgradeName}</div>`;
+            }
+
+            let btnHtml = '';
+            if (perm.purchased) {
+                btnHtml = `<button class="perm-node__btn" disabled style="background:#1b5e20;"><span>Ativo</span> <span>✓</span></button>`;
+            } else {
+                btnHtml = `
+                    <button class="perm-node__btn" id="btn-perm-${perm.id}" ${!isPurchasable ? 'disabled' : ''}>
+                        <span>Comprar</span>
+                        <span>${perm.cost} makitas</span>
+                    </button>
+                `;
+            }
+
+            node.innerHTML = `
+                <div class="perm-node__top">
+                    <div class="perm-node__icon">${perm.icon}</div>
+                    <div class="perm-node__title-wrap">
+                        <span class="perm-node__name">${perm.name}</span>
+                        <span class="perm-node__badge">${badgeText}</span>
+                    </div>
+                </div>
+                <div class="perm-node__desc">${perm.desc}</div>
+                ${reqsHtml}
+                ${btnHtml}
+            `;
+
+            if (!perm.purchased) {
+                const btn = node.querySelector(`#btn-perm-${perm.id}`);
+                if (btn) {
+                    btn.addEventListener('click', () => buyPermanentUpgrade(perm));
+                }
+            }
+
+            permTreeGridEl.appendChild(node);
+        });
+    }
+
+    function renderStats() {
+        statMakitasEl.textContent = formatNumber(makitas);
+        statTotalMakitasEl.textContent = formatNumber(Math.max(totalMakitasMade, makitas));
+        statMpsEl.textContent = mps.toFixed(1);
+
+        // Calcula poder de clique com bônus de melhorias permanentes
+        let clickPower = 1.0;
+        if (permanentUpgrades.find(u => u.id === 'perm_disco_diamante')?.purchased) {
+            clickPower += 1.0;
+        }
+        statClickPowerEl.textContent = clickPower.toFixed(1);
+
+        const purchasedCount = permanentUpgrades.filter(u => u.purchased).length;
+        statPermCountEl.textContent = `${purchasedCount}/${permanentUpgrades.length}`;
+    }
+
     function render() {
         counterEl.textContent = formatNumber(makitas);
         rateEl.textContent = mps.toFixed(1);
@@ -680,6 +1180,9 @@
                 capped ? 'nível máximo atingido' : descForQty(upgrade, qty);
             document.getElementById('buy-' + upgrade.id).disabled = capped || qty <= 0 || makitas < cost;
         });
+
+        renderPermTree();
+        renderStats();
     }
 
     function showFloatPlus(amount) {
@@ -696,10 +1199,6 @@
 
     // dispara uma imagem "voando" a partir do centro do clicker — uma a
     // cada clique, saindo em uma direção/rotação/tamanho aleatórios.
-    // Usa transition (em vez de @keyframes com custom properties) porque
-    // é mais confiável entre navegadores: setamos o estado inicial, forçamos
-    // o navegador a "aplicar" esse estado (reflow) e só então mudamos pro
-    // estado final — o CSS cuida da transição automaticamente.
     function spawnFlyingMakita() {
         const rect = makitaBtn.getBoundingClientRect();
         const areaRect = clickArea.getBoundingClientRect();
@@ -728,8 +1227,6 @@
         const ty = Math.sin(angle) * distance - 40; // leve tendência pra cima
         const rot = Math.random() * 720 - 360;
 
-        // força o navegador a "commitar" o estado inicial antes de mudar,
-        // senão a transição não roda (o browser só vê o estado final)
         // eslint-disable-next-line no-unused-expressions
         img.offsetWidth;
 
@@ -743,20 +1240,20 @@
             img.remove();
         };
         img.addEventListener('transitionend', remove);
-        // rede de segurança: remove mesmo se o evento de transição não disparar
         setTimeout(remove, 1200);
     }
 
     // feedback visual instantâneo do clique — não mexe em `makitas`/`mps`
-    // (isso só muda quando o ESP32 manda a atualização de verdade)
     function playClickFeedback() {
-        showFloatPlus(1);
+        let gain = 1;
+        if (permanentUpgrades.find(u => u.id === 'perm_disco_diamante')?.purchased) {
+            gain += 1;
+        }
+        showFloatPlus(gain);
         spawnFlyingMakita();
     }
 
     // clique manual — mesma ação que o botão físico do ESP32 vai disparar.
-    // Mostra o feedback na hora e avisa o servidor pelo WebSocket; o
-    // contador só é atualizado quando a resposta chegar em socket.onmessage.
     makitaBtn.addEventListener('click', () => {
         playClickFeedback();
         if (socket.readyState === WebSocket.OPEN) {
@@ -764,8 +1261,7 @@
         }
     });
 
-    // recebe o estado atualizado do ESP32 (makitas, mps e quantos de cada
-    // upgrade o jogador já tem) e re-renderiza a tela com esses valores
+    // recebe o estado atualizado do ESP32
     socket.onmessage = (event) => {
         let data;
         try {
@@ -775,7 +1271,14 @@
             return;
         }
 
-        if (typeof data.makitas === 'number') makitas = data.makitas;
+        if (typeof data.makitas === 'number') {
+            if (data.makitas > prevMakitas) {
+                totalMakitasMade += (data.makitas - prevMakitas);
+                savePermanentProgress();
+            }
+            prevMakitas = data.makitas;
+            makitas = data.makitas;
+        }
         if (typeof data.mps === 'number') mps = data.mps;
         if (data.owned && typeof data.owned === 'object') {
             upgrades.forEach(upgrade => {
