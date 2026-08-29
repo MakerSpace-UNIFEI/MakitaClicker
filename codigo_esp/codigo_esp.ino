@@ -139,10 +139,10 @@ void checkOTA() {
     return;
   }
 
+  String fwUrl = doc["firmware_url"] | "";
+  String fsUrl = doc["fs_url"]       | "";
   int remoteFwVer = doc["firmware_version"] | 0;
   int remoteFsVer = doc["fs_version"]       | 0;
-  String fwUrl    = doc["firmware_url"]      | "";
-  String fsUrl    = doc["fs_url"]            | "";
 
   Serial.printf("[OTA] Local FW=%d FS=%d | Remoto FW=%d FS=%d\n",
                 CURRENT_FIRMWARE_VER, CURRENT_FS_VER, remoteFwVer, remoteFsVer);
@@ -163,7 +163,7 @@ void checkOTA() {
     Serial.println("[OTA] Atualizando Firmware...");
     ESPhttpUpdate.rebootOnUpdate(true);
     t_httpUpdate_return ret = ESPhttpUpdate.update(client, fwUrl);
-    // Se chegou aqui, houve falha (sucesso causa reboot)
+    // Se chegou aqui, houve falha (sucesso causa reboot automatico)
     Serial.printf("[OTA] Falha no FW update: %s\n", ESPhttpUpdate.getLastErrorString().c_str());
   }
 }
