@@ -45,6 +45,7 @@ void resetMega() {
 bool sendStk500v2(Stream &s, const uint8_t *payload, uint16_t len, uint8_t *resp, uint16_t &respLen, uint8_t &seqNum, uint32_t timeoutMs = 2000) {
   // Limpa qualquer byte residual na serial antes de enviar
   while (s.available()) s.read();
+  if (resp) memset(resp, 0xFF, 64);
 
   uint8_t header[5];
   header[0] = 0x1B; // MESSAGE_START
@@ -71,17 +72,26 @@ bool sendStk500v2(Stream &s, const uint8_t *payload, uint16_t len, uint8_t *resp
     yield();
   }
 
-  if (s.available() < 5 || s.read() != 0x1B) return false;
+  if (s.available() < 5 || s.read() != 0x1B) {
+    Serial.printf("[STK-DBG] Timeout/No 0x1B (avail=%d)\n", s.available());
+    return false;
+  }
   uint8_t rSeq = s.read();
   uint8_t rLenH = s.read();
   uint8_t rLenL = s.read();
   uint8_t rTok = s.read();
-  if (rTok != 0x0E) return false;
+  if (rTok != 0x0E) {
+    Serial.printf("[STK-DBG] Bad token: 0x%02X\n", rTok);
+    return false;
+  }
 
   uint16_t rLen = ((uint16_t)rLenH << 8) | rLenL;
   start = millis();
   while (s.available() < (rLen + 1)) {
-    if (millis() - start > timeoutMs) return false;
+    if (millis() - start > timeoutMs) {
+      Serial.printf("[STK-DBG] Body timeout (avail=%d need=%d)\n", s.available(), rLen + 1);
+      return false;
+    }
     delay(1);
     yield();
   }
@@ -95,7 +105,10 @@ bool sendStk500v2(Stream &s, const uint8_t *payload, uint16_t len, uint8_t *resp
   uint8_t expCheck = s.read();
   seqNum++;
 
-  if (rCheck != expCheck) return false;
+  if (rCheck != expCheck) {
+    Serial.printf("[STK-DBG] Checksum mismatch: calc 0x%02X != exp 0x%02X\n", rCheck, expCheck);
+    return false;
+  }
   respLen = rLen;
   return true;
 }
