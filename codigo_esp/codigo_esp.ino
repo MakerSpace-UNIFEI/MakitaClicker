@@ -197,12 +197,13 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
   pinMode(MEGA_RESET_PIN, OUTPUT);
   digitalWrite(MEGA_RESET_PIN, LOW);
   delay(100);
-  digitalWrite(MEGA_RESET_PIN, HIGH);
-  pinMode(MEGA_RESET_PIN, INPUT);
+  pinMode(MEGA_RESET_PIN, INPUT); // Alta impedância segura
+  delay(100);
 
+  megaSerial.setRxBufferSize(512);
   megaSerial.begin(115200);
   while (megaSerial.available()) megaSerial.read();
-  delay(150);
+  delay(100);
 
   uint8_t seq = 1;
   uint8_t resp[64];
@@ -229,8 +230,8 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
   }
   Serial.println("[OTA-MEGA] Handshake STK500v2 OK!");
 
-  // 2. Enter Prog Mode
-  uint8_t enterProg[] = { 0x10, 0xC8, 0x64, 0x19, 0x20, 0xAC, 0x53, 0x00, 0x00 };
+  // 2. Enter Prog Mode (12 bytes padrão STK500v2)
+  uint8_t enterProg[] = { 0x10, 0xC8, 0x64, 0x19, 0x20, 0x00, 0x53, 0x03, 0xAC, 0x53, 0x00, 0x00 };
   sendStk500v2(megaSerial, enterProg, sizeof(enterProg), resp, respLen, seq, 1000);
 
   // 3. Grava páginas de 256 bytes lendo do arquivo local
@@ -253,8 +254,8 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
     bool pageOk = false;
     for (int retry = 0; retry < 5; retry++) {
       ESP.wdtFeed();
-      // CMD_LOAD_ADDRESS (endereço em words de 16-bit)
-      uint32_t wordAddr = currentAddr >> 1;
+      // CMD_LOAD_ADDRESS (endereço de flash em words de 16-bit com flag 0x80000000 para ATmega2560)
+      uint32_t wordAddr = (currentAddr >> 1) | 0x80000000;
       uint8_t loadAddrCmd[] = {
         0x06,
         (uint8_t)((wordAddr >> 24) & 0xFF),
@@ -311,12 +312,12 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
   f.close();
   LittleFS.remove("/mega_temp.bin");
 
-  // Reinicia o Mega para rodar o novo código
+  // Reinicia o Mega para rodar o novo código e aguarda boot
   pinMode(MEGA_RESET_PIN, OUTPUT);
   digitalWrite(MEGA_RESET_PIN, LOW);
   delay(100);
-  digitalWrite(MEGA_RESET_PIN, HIGH);
   pinMode(MEGA_RESET_PIN, INPUT);
+  delay(1500);
 
   Serial.println("[OTA-MEGA] Arduino Mega regravado com sucesso!");
   return true;
@@ -937,6 +938,7 @@ void checkOTA() {
 void setup() {
   system_update_cpu_freq(160); // 160MHz para máxima precisão de baud rate na SoftwareSerial
   Serial.begin(115200);
+  megaSerial.setRxBufferSize(512);
   megaSerial.begin(115200);
 
   // Inicializa o pino de reset do Mega em modo Open-Drain (alta impedancia)
