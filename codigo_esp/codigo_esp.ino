@@ -497,7 +497,7 @@ void handleClick() {
     gain += (currentMps * 0.05);
   }
   makitas += gain;
-  broadcastState();
+  notifyMega();
 }
 
 // Processa a compra considerando id, 1, 10 ou MAX
@@ -1002,6 +1002,7 @@ void setup() {
 }
 
 unsigned long lastSave = 0;
+unsigned long lastMegaUpdate = 0;
 
 void loop() {
   MDNS.update();
@@ -1017,7 +1018,7 @@ void loop() {
     }
   }
 
-  // Produção passiva
+  // Produção passiva autoritativa no ESP
   unsigned long now = millis();
   if (now - lastTick >= 100) {
     float dt = (now - lastTick) / 1000.0;
@@ -1027,11 +1028,16 @@ void loop() {
     }
   }
 
-  if (now - lastBroadcast >= 500) {
+  // Atualização de telemetria para o LCD do Arduino Mega a cada 250ms
+  if (now - lastMegaUpdate >= 250) {
+    lastMegaUpdate = now;
+    notifyMega();
+  }
+
+  // Sincronização periódica suave com a Web a cada 1.5 segundos
+  if (now - lastBroadcast >= 1500) {
     lastBroadcast = now;
-    if (getTotalMps() > 0) {
-      broadcastState();
-    }
+    broadcastState();
   }
 
   // Autosave a cada 5 segundos se houver saldo ou produção

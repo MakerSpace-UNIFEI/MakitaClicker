@@ -731,137 +731,10 @@
 
 <script>
     // =====================================================================
-    // COMUNICAÇÃO COM O ESP32 / MODO LOCAL DE TESTES (OFFLINE SIMULATOR)
+    // MOTOR DE JOGO NO CLIENTE (60 FPS) + SINCRONIZAÇÃO AUTORITATIVA COM ESP
     // =====================================================================
     let isLocalMode = false;
     let socket = null;
-
-    function initLocalSimulation() {
-        if (isLocalMode) return;
-        isLocalMode = true;
-        logEl.textContent = '🛠️ Modo de Teste Local Ativo (Simulador do ESP - Edição 99B)';
-        logEl.style.color = 'var(--orange)';
-
-        loadLocalPermanentProgress();
-
-        // Carrega estado salvo local para testes
-        const savedState = localStorage.getItem('makita_local_state');
-        if (savedState) {
-            try {
-                const parsed = JSON.parse(savedState);
-                makitas = parsed.makitas || 0;
-                if (parsed.owned) {
-                    Object.assign(owned, parsed.owned);
-                }
-            } catch(e) {}
-        }
-
-        // Loop de produção passiva local (100ms)
-        setInterval(() => {
-            const currentMps = calculateLocalMps();
-            if (currentMps > 0) {
-                const dt = 0.1;
-                const gain = currentMps * dt;
-                makitas += gain;
-                totalMakitasMade += gain;
-                savePermanentProgress();
-                saveLocalState();
-                render();
-            }
-        }, 100);
-    }
-
-    function calculateLocalMps() {
-        const permLub = permanentUpgrades.find(u => u.id === 'perm_lubrificante')?.purchased;
-        const permBrush = permanentUpgrades.find(u => u.id === 'perm_motor_brushless')?.purchased;
-        const permBat = permanentUpgrades.find(u => u.id === 'perm_bateria_lítio')?.purchased;
-        const permIa = permanentUpgrades.find(u => u.id === 'perm_ia_maker')?.purchased;
-        const permRefrig = permanentUpgrades.find(u => u.id === 'perm_refrigeracao')?.purchased;
-        const permNano = permanentUpgrades.find(u => u.id === 'perm_nanobots')?.purchased;
-        const permSing = permanentUpgrades.find(u => u.id === 'perm_singularidade')?.purchased;
-        const permFusao = permanentUpgrades.find(u => u.id === 'perm_fusao_fria')?.purchased;
-        const permHiperC = permanentUpgrades.find(u => u.id === 'perm_hiperconducao')?.purchased;
-        const permTaq = permanentUpgrades.find(u => u.id === 'perm_taquions')?.purchased;
-        const permMatEsc = permanentUpgrades.find(u => u.id === 'perm_materia_escura')?.purchased;
-        const permOni = permanentUpgrades.find(u => u.id === 'perm_onipotencia_maker')?.purchased;
-
-        let baseMps = 0.0;
-        upgrades.forEach(u => {
-            baseMps += (owned[u.id] || 0) * u.mps;
-        });
-
-        let workshopMult = 1.0;
-        if (permBrush) workshopMult *= 2.0;
-        if (permHiperC) workshopMult *= 3.0;
-        if (permOni) workshopMult *= 4.0;
-        baseMps *= workshopMult;
-
-        let mult = 1.0;
-        if (permLub) mult += 0.10;
-        if (permRefrig) mult += 0.20;
-        if (permBat) mult += 0.25;
-        if (permIa) mult += 0.50;
-        if (permNano) mult += 0.75;
-        if (permFusao) mult += 1.00;
-        if (permSing) mult += 1.50;
-        if (permTaq) mult += 2.00;
-        if (permMatEsc) mult += 3.00;
-        if (permOni) mult += 5.00;
-
-        return baseMps * mult;
-    }
-
-    function calculateLocalClickPower() {
-        let power = 1.0;
-        if (permanentUpgrades.find(u => u.id === 'perm_disco_diamante')?.purchased) power += 1.0;
-        if (permanentUpgrades.find(u => u.id === 'perm_titanio')?.purchased) power += 3.0;
-        if (permanentUpgrades.find(u => u.id === 'perm_plasma_cutter')?.purchased) power += 25.0;
-        if (permanentUpgrades.find(u => u.id === 'perm_laser_gama')?.purchased) power += 200.0;
-        if (permanentUpgrades.find(u => u.id === 'perm_singularidade')?.purchased) power *= 3.0;
-        if (permanentUpgrades.find(u => u.id === 'perm_hiper_clique')?.purchased) power *= 10.0;
-        return power;
-    }
-
-    function saveLocalState() {
-        localStorage.setItem('makita_local_state', JSON.stringify({
-            makitas: makitas,
-            owned: owned
-        }));
-    }
-
-    function tryConnectWebSocket() {
-        if (!window.location.hostname || window.location.protocol === 'file:') {
-            initLocalSimulation();
-            return;
-        }
-
-        try {
-            socket = new WebSocket('ws://' + window.location.hostname + ':81/');
-            
-            socket.onopen = () => {
-                isLocalMode = false;
-                logEl.textContent = 'Conectado à Oficina Global (ESP)!';
-                logEl.style.color = 'var(--text-lo)';
-            };
-
-            socket.onclose = () => {
-                if (!isLocalMode) {
-                    initLocalSimulation();
-                }
-            };
-
-            socket.onerror = () => {
-                if (!isLocalMode) {
-                    initLocalSimulation();
-                }
-            };
-
-            socket.onmessage = handleSocketMessage;
-        } catch(e) {
-            initLocalSimulation();
-        }
-    }
-
     let serverClickPower = 1.0;
 
     // ---------- estado ----------
@@ -869,6 +742,10 @@
     let mps = 0;
     let buyQty = 1;
     const MAX_OWNED = 100;
+
+    // Total de makitas acumuladas na sessão / histórico
+    let totalMakitasMade = 0;
+    let prevMakitas = 0;
 
     // ---------- 24 UPGRADES DA LOJA (PROGRESSÃO ATÉ 99B+) ----------
     const upgrades = [
@@ -900,27 +777,6 @@
 
     const owned = {};
     upgrades.forEach(u => { owned[u.id] = 0; });
-
-    // ---------- elementos ----------
-    const counterEl = document.getElementById('counter');
-    const rateEl = document.getElementById('rate');
-    const makitaBtn = document.getElementById('makitaBtn');
-    const clickArea = document.getElementById('clickArea');
-    const shopListEl = document.getElementById('shopList');
-    const shopQtyEl = document.getElementById('shopQty');
-    const logEl = document.getElementById('log');
-    const permTreeGridEl = document.getElementById('permTreeGrid');
-
-    // Elementos de estatísticas
-    const statMakitasEl = document.getElementById('statMakitas');
-    const statTotalMakitasEl = document.getElementById('statTotalMakitas');
-    const statMpsEl = document.getElementById('statMps');
-    const statClickPowerEl = document.getElementById('statClickPower');
-    const statPermCountEl = document.getElementById('statPermCount');
-
-    // Total de makitas acumuladas na sessão / histórico
-    let totalMakitasMade = 0;
-    let prevMakitas = 0;
 
     // ---------- 20 HABILIDADES NA ÁRVORE PERMANENTE (ATÉ 99B) ----------
     const permanentUpgrades = [
@@ -1126,7 +982,39 @@
         }
     ];
 
-    // Carrega progresso salvo de melhorias permanentes (localStorage)
+    // ---------- elementos ----------
+    const counterEl = document.getElementById('counter');
+    const rateEl = document.getElementById('rate');
+    const makitaBtn = document.getElementById('makitaBtn');
+    const clickArea = document.getElementById('clickArea');
+    const shopListEl = document.getElementById('shopList');
+    const shopQtyEl = document.getElementById('shopQty');
+    const logEl = document.getElementById('log');
+    const permTreeGridEl = document.getElementById('permTreeGrid');
+
+    // Elementos de estatísticas
+    const statMakitasEl = document.getElementById('statMakitas');
+    const statTotalMakitasEl = document.getElementById('statTotalMakitas');
+    const statMpsEl = document.getElementById('statMps');
+    const statClickPowerEl = document.getElementById('statClickPower');
+    const statPermCountEl = document.getElementById('statPermCount');
+    const goalPercentTextEl = document.getElementById('goalPercentText');
+    const goalProgressBarEl = document.getElementById('goalProgressBar');
+    const goalStatusMsgEl = document.getElementById('goalStatusMsg');
+
+    // ---------- CONTROLE DE ABAS ----------
+    const tabBtns = document.querySelectorAll('.center-nav .navbtn');
+    tabBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const targetTab = btn.dataset.tab;
+            tabBtns.forEach(b => b.classList.toggle('is-active', b === btn));
+            document.querySelectorAll('.tab-pane').forEach(pane => {
+                pane.classList.toggle('is-active', pane.id === targetTab);
+            });
+        });
+    });
+
+    // ---------- PERSISTÊNCIA LOCAL (LOCALSTORAGE) ----------
     function loadLocalPermanentProgress() {
         const savedPerms = localStorage.getItem('makita_perm_upgrades');
         if (savedPerms) {
@@ -1172,24 +1060,62 @@
         }));
     }
 
-    // ---------- CONTROLE DE ABAS ----------
-    const tabBtns = document.querySelectorAll('.center-nav .navbtn');
-    tabBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            const targetTab = btn.dataset.tab;
-            tabBtns.forEach(b => b.classList.toggle('is-active', b === btn));
-            document.querySelectorAll('.tab-pane').forEach(pane => {
-                pane.classList.toggle('is-active', pane.id === targetTab);
-            });
-        });
-    });
+    // ---------- CÁLCULOS LOCAIS AUTÔNOMOS ----------
+    function calculateLocalMps() {
+        const permLub = permanentUpgrades.find(u => u.id === 'perm_lubrificante')?.purchased;
+        const permBrush = permanentUpgrades.find(u => u.id === 'perm_motor_brushless')?.purchased;
+        const permBat = permanentUpgrades.find(u => u.id === 'perm_bateria_lítio')?.purchased;
+        const permIa = permanentUpgrades.find(u => u.id === 'perm_ia_maker')?.purchased;
+        const permRefrig = permanentUpgrades.find(u => u.id === 'perm_refrigeracao')?.purchased;
+        const permNano = permanentUpgrades.find(u => u.id === 'perm_nanobots')?.purchased;
+        const permSing = permanentUpgrades.find(u => u.id === 'perm_singularidade')?.purchased;
+        const permFusao = permanentUpgrades.find(u => u.id === 'perm_fusao_fria')?.purchased;
+        const permHiperC = permanentUpgrades.find(u => u.id === 'perm_hiperconducao')?.purchased;
+        const permTaq = permanentUpgrades.find(u => u.id === 'perm_taquions')?.purchased;
+        const permMatEsc = permanentUpgrades.find(u => u.id === 'perm_materia_escura')?.purchased;
+        const permOni = permanentUpgrades.find(u => u.id === 'perm_onipotencia_maker')?.purchased;
 
-    // custo de UMA unidade adicional, já tendo comprado `count` unidades antes
+        let baseMps = 0.0;
+        upgrades.forEach(u => {
+            baseMps += (owned[u.id] || 0) * u.mps;
+        });
+
+        let workshopMult = 1.0;
+        if (permBrush) workshopMult *= 2.0;
+        if (permHiperC) workshopMult *= 3.0;
+        if (permOni) workshopMult *= 4.0;
+        baseMps *= workshopMult;
+
+        let mult = 1.0;
+        if (permLub) mult += 0.10;
+        if (permRefrig) mult += 0.20;
+        if (permBat) mult += 0.25;
+        if (permIa) mult += 0.50;
+        if (permNano) mult += 0.75;
+        if (permFusao) mult += 1.00;
+        if (permSing) mult += 1.50;
+        if (permTaq) mult += 2.00;
+        if (permMatEsc) mult += 3.00;
+        if (permOni) mult += 5.00;
+
+        return baseMps * mult;
+    }
+
+    function calculateLocalClickPower() {
+        let power = 1.0;
+        if (permanentUpgrades.find(u => u.id === 'perm_disco_diamante')?.purchased) power += 1.0;
+        if (permanentUpgrades.find(u => u.id === 'perm_titanio')?.purchased) power += 3.0;
+        if (permanentUpgrades.find(u => u.id === 'perm_plasma_cutter')?.purchased) power += 25.0;
+        if (permanentUpgrades.find(u => u.id === 'perm_laser_gama')?.purchased) power += 200.0;
+        if (permanentUpgrades.find(u => u.id === 'perm_singularidade')?.purchased) power *= 3.0;
+        if (permanentUpgrades.find(u => u.id === 'perm_hiper_clique')?.purchased) power *= 10.0;
+        return power;
+    }
+
     function unitCost(upgrade, count) {
         return Math.ceil(upgrade.baseCost * Math.pow(upgrade.growth, count));
     }
 
-    // custo total para comprar `qty` unidades de uma vez
     function costForQuantity(upgrade, qty) {
         let total = 0;
         for (let i = 0; i < qty; i++) {
@@ -1198,7 +1124,6 @@
         return total;
     }
 
-    // Formatação compacta (k, M, B, T, Qa) com alta precisão e separador brasileiro
     function formatCompactNumber(n) {
         if (n == null || isNaN(n)) return '0';
         if (n < 1000) return Math.floor(n).toString();
@@ -1265,7 +1190,7 @@
         btn.addEventListener('click', () => setBuyQty(raw === 'max' ? 'max' : Number(raw)));
     });
 
-    // monta os botões da loja uma vez, a partir da lista `upgrades`
+    // ---------- CONSTRUÇÃO INICIAL DO DOM (UMA ÚNICA VEZ) ----------
     function buildShopList() {
         shopListEl.innerHTML = '';
         upgrades.forEach(upgrade => {
@@ -1286,51 +1211,81 @@
         });
     }
 
+    function buildPermTree() {
+        permTreeGridEl.innerHTML = '';
+        permanentUpgrades.forEach(perm => {
+            const node = document.createElement('div');
+            node.className = 'perm-node status-locked';
+            node.id = 'perm-node-' + perm.id;
+            node.innerHTML = `
+                <div class="perm-node__top">
+                    <div class="perm-node__icon" id="perm-icon-${perm.id}">${perm.icon}</div>
+                    <div class="perm-node__title-wrap">
+                        <span class="perm-node__name" id="perm-name-${perm.id}">${perm.name}</span>
+                        <span class="perm-node__badge" id="perm-badge-${perm.id}">Bloqueado</span>
+                    </div>
+                </div>
+                <div class="perm-node__desc" id="perm-desc-${perm.id}">${perm.desc}</div>
+                <div class="perm-node__reqs" id="perm-reqs-${perm.id}" style="display:none;"></div>
+                <button class="perm-node__btn" id="btn-perm-${perm.id}">
+                    <span id="btn-perm-label-${perm.id}">Comprar</span>
+                    <span id="btn-perm-cost-${perm.id}">${formatCompactNumber(perm.cost)}</span>
+                </button>
+            `;
+            const btn = node.querySelector(`#btn-perm-${perm.id}`);
+            btn.addEventListener('click', () => buyPermanentUpgrade(perm));
+            permTreeGridEl.appendChild(node);
+        });
+    }
+
+    // ---------- COMPRAS OTIMISTAS NO CLIENTE + ENVIO AO ESP ----------
     function buyUpgrade(upgrade) {
         const { qty, cost } = computeBuy(upgrade);
-        if (qty <= 0) return;
+        if (qty <= 0 || makitas < cost) return;
+
+        // Atualização instantânea no cliente (zero lag visual)
+        makitas -= cost;
+        owned[upgrade.id] = (owned[upgrade.id] || 0) + qty;
+        mps = calculateLocalMps();
 
         if (socket && socket.readyState === WebSocket.OPEN) {
             socket.send(`BUY:${upgrade.id}:${buyQty}`);
-        } else if (isLocalMode) {
-            if (makitas >= cost) {
-                makitas -= cost;
-                owned[upgrade.id] = (owned[upgrade.id] || 0) + qty;
-                mps = calculateLocalMps();
-                saveLocalState();
-                render();
-            }
         }
+        saveLocalState();
+        render();
     }
 
     function buyPermanentUpgrade(perm) {
-        if (perm.purchased) return;
-        if (makitas < perm.cost) return;
+        if (perm.purchased || makitas < perm.cost) return;
 
         if (perm.reqUpgrade) {
             const req = permanentUpgrades.find(u => u.id === perm.reqUpgrade);
             if (req && !req.purchased) return;
         }
 
+        // Atualização instantânea no cliente
         perm.purchased = true;
-        savePermanentProgress();
+        makitas -= perm.cost;
+        mps = calculateLocalMps();
+        serverClickPower = calculateLocalClickPower();
 
         if (socket && socket.readyState === WebSocket.OPEN) {
             socket.send(`PERM_BUY:${perm.id}:${perm.cost}`);
-        } else if (isLocalMode) {
-            makitas -= perm.cost;
-            mps = calculateLocalMps();
-            serverClickPower = calculateLocalClickPower();
-            saveLocalState();
         }
 
+        savePermanentProgress();
+        saveLocalState();
         render();
     }
 
+    // ---------- RENDERIZAÇÃO ULTRA RÁPIDA (MODIFICA APENAS ATRIBUTOS) ----------
     function renderPermTree() {
-        permTreeGridEl.innerHTML = '';
+        const totalAccum = Math.max(totalMakitasMade, makitas);
 
         permanentUpgrades.forEach(perm => {
+            const node = document.getElementById('perm-node-' + perm.id);
+            if (!node) return;
+
             let reqUpgradeMet = true;
             let reqUpgradeName = '';
             if (perm.reqUpgrade) {
@@ -1341,26 +1296,34 @@
                 }
             }
 
-            const totalAccum = Math.max(totalMakitasMade, makitas);
             const isRevealed = perm.purchased || reqUpgradeMet || (totalAccum >= perm.reqMakitas);
+            const iconEl = document.getElementById('perm-icon-' + perm.id);
+            const nameEl = document.getElementById('perm-name-' + perm.id);
+            const badgeEl = document.getElementById('perm-badge-' + perm.id);
+            const descEl = document.getElementById('perm-desc-' + perm.id);
+            const reqsEl = document.getElementById('perm-reqs-' + perm.id);
+            const btn = document.getElementById('btn-perm-' + perm.id);
+            const btnLabel = document.getElementById('btn-perm-label-' + perm.id);
+            const btnCost = document.getElementById('btn-perm-cost-' + perm.id);
 
             if (!isRevealed) {
-                const lockedNode = document.createElement('div');
-                lockedNode.className = 'perm-node status-locked';
-                lockedNode.innerHTML = `
-                    <div class="perm-node__top">
-                        <div class="perm-node__icon">🔒</div>
-                        <div class="perm-node__title-wrap">
-                            <span class="perm-node__name">Tecnologia Oculta</span>
-                            <span class="perm-node__badge">Bloqueado</span>
-                        </div>
-                    </div>
-                    <div class="perm-node__desc">Produza mais makitas ou desbloqueie tecnologias anteriores para revelar esta melhoria.</div>
-                    <div class="perm-node__reqs">Requer: ${formatCompactNumber(perm.reqMakitas)} makitas acumuladas</div>
-                `;
-                permTreeGridEl.appendChild(lockedNode);
+                node.className = 'perm-node status-locked';
+                if (iconEl) iconEl.textContent = '🔒';
+                if (nameEl) nameEl.textContent = 'Tecnologia Oculta';
+                if (badgeEl) badgeEl.textContent = 'Bloqueado';
+                if (descEl) descEl.textContent = 'Produza mais makitas ou desbloqueie tecnologias anteriores para revelar esta melhoria.';
+                if (reqsEl) {
+                    reqsEl.style.display = 'block';
+                    reqsEl.textContent = `Requer: ${formatCompactNumber(perm.reqMakitas)} makitas acumuladas`;
+                }
+                if (btn) btn.style.display = 'none';
                 return;
             }
+
+            // Revelado
+            if (iconEl) iconEl.textContent = perm.icon;
+            if (nameEl) nameEl.textContent = perm.name;
+            if (descEl) descEl.textContent = perm.desc;
 
             let statusClass = 'status-available';
             let badgeText = 'Disponível';
@@ -1374,63 +1337,55 @@
                 badgeText = 'Requisito Pendente';
             }
 
-            const node = document.createElement('div');
             node.className = `perm-node ${statusClass}`;
-            
-            let reqsHtml = '';
-            if (perm.reqUpgrade && !reqUpgradeMet) {
-                reqsHtml = `<div class="perm-node__reqs">Pré-requisito: ${reqUpgradeName}</div>`;
-            }
+            if (badgeEl) badgeEl.textContent = badgeText;
 
-            let btnHtml = '';
-            if (perm.purchased) {
-                btnHtml = `<button class="perm-node__btn" disabled style="background:#1b5e20;"><span>Ativo</span> <span>✓</span></button>`;
-            } else {
-                btnHtml = `
-                    <button class="perm-node__btn" id="btn-perm-${perm.id}" ${!isPurchasable ? 'disabled' : ''} title="${formatFullNumber(perm.cost)} Makitas">
-                        <span>Comprar</span>
-                        <span>${formatCompactNumber(perm.cost)}</span>
-                    </button>
-                `;
-            }
-
-            node.innerHTML = `
-                <div class="perm-node__top">
-                    <div class="perm-node__icon">${perm.icon}</div>
-                    <div class="perm-node__title-wrap">
-                        <span class="perm-node__name">${perm.name}</span>
-                        <span class="perm-node__badge">${badgeText}</span>
-                    </div>
-                </div>
-                <div class="perm-node__desc">${perm.desc}</div>
-                ${reqsHtml}
-                ${btnHtml}
-            `;
-
-            if (!perm.purchased) {
-                const btn = node.querySelector(`#btn-perm-${perm.id}`);
-                if (btn) {
-                    btn.addEventListener('click', () => buyPermanentUpgrade(perm));
+            if (reqsEl) {
+                if (perm.reqUpgrade && !reqUpgradeMet) {
+                    reqsEl.style.display = 'block';
+                    reqsEl.textContent = `Pré-requisito: ${reqUpgradeName}`;
+                } else {
+                    reqsEl.style.display = 'none';
                 }
             }
 
-            permTreeGridEl.appendChild(node);
+            if (btn) {
+                btn.style.display = 'flex';
+                if (perm.purchased) {
+                    btn.disabled = true;
+                    btn.style.background = '#1b5e20';
+                    if (btnLabel) btnLabel.textContent = 'Ativo';
+                    if (btnCost) btnCost.textContent = '✓';
+                } else {
+                    btn.disabled = !isPurchasable;
+                    btn.style.background = '';
+                    if (btnLabel) btnLabel.textContent = 'Comprar';
+                    if (btnCost) btnCost.textContent = formatCompactNumber(perm.cost);
+                    btn.title = `${formatFullNumber(perm.cost)} Makitas`;
+                }
+            }
         });
     }
 
     function renderStats() {
-        statMakitasEl.textContent = formatCompactNumber(makitas);
-        statMakitasEl.title = formatFullNumber(makitas) + ' Makitas';
+        if (statMakitasEl) {
+            statMakitasEl.textContent = formatCompactNumber(makitas);
+            statMakitasEl.title = formatFullNumber(makitas) + ' Makitas';
+        }
         
         const total = Math.max(totalMakitasMade, makitas);
-        statTotalMakitasEl.textContent = formatCompactNumber(total);
-        statTotalMakitasEl.title = formatFullNumber(total) + ' Makitas';
+        if (statTotalMakitasEl) {
+            statTotalMakitasEl.textContent = formatCompactNumber(total);
+            statTotalMakitasEl.title = formatFullNumber(total) + ' Makitas';
+        }
         
-        statMpsEl.textContent = mps >= 1000 ? formatCompactNumber(mps) + '/s' : mps.toFixed(1) + '/s';
-        statMpsEl.title = mps.toLocaleString('pt-BR') + ' Makitas por segundo';
+        if (statMpsEl) {
+            statMpsEl.textContent = mps >= 1000 ? formatCompactNumber(mps) + '/s' : mps.toFixed(1) + '/s';
+            statMpsEl.title = mps.toLocaleString('pt-BR') + ' Makitas por segundo';
+        }
 
         // Calcula poder de clique com bônus de melhorias permanentes
-        let clickPower = (isLocalMode ? calculateLocalClickPower() : serverClickPower) || 1.0;
+        let clickPower = calculateLocalClickPower() || 1.0;
         
         let synergyPct = 0;
         if (permanentUpgrades.find(u => u.id === 'perm_onipotencia_maker')?.purchased) {
@@ -1443,24 +1398,25 @@
             synergyPct = 0.05;
         }
 
-        if (synergyPct > 0) {
-            const extra = (mps * synergyPct);
-            statClickPowerEl.textContent = `${formatCompactNumber(clickPower)} (+${formatCompactNumber(extra)}/s)`;
-        } else {
-            statClickPowerEl.textContent = formatCompactNumber(clickPower);
+        if (statClickPowerEl) {
+            if (synergyPct > 0) {
+                const extra = (mps * synergyPct);
+                statClickPowerEl.textContent = `${formatCompactNumber(clickPower)} (+${formatCompactNumber(extra)}/s)`;
+            } else {
+                statClickPowerEl.textContent = formatCompactNumber(clickPower);
+            }
+            statClickPowerEl.title = clickPower.toLocaleString('pt-BR') + ' por clique base';
         }
-        statClickPowerEl.title = clickPower.toLocaleString('pt-BR') + ' por clique base';
 
-        const purchasedCount = permanentUpgrades.filter(u => u.purchased).length;
-        statPermCountEl.textContent = `${purchasedCount}/${permanentUpgrades.length}`;
+        if (statPermCountEl) {
+            const purchasedCount = permanentUpgrades.filter(u => u.purchased).length;
+            statPermCountEl.textContent = `${purchasedCount}/${permanentUpgrades.length}`;
+        }
 
         // Meta 99B
         const goalTotal = 99000000000;
         const currentProgress = Math.max(makitas, totalMakitasMade);
         const pct = Math.min(100, (currentProgress / goalTotal) * 100);
-        const goalPercentTextEl = document.getElementById('goalPercentText');
-        const goalProgressBarEl = document.getElementById('goalProgressBar');
-        const goalStatusMsgEl = document.getElementById('goalStatusMsg');
 
         if (goalPercentTextEl && goalProgressBarEl) {
             goalPercentTextEl.textContent = pct >= 100 ? '100.00% CONCLUÍDO! 👑' : (pct < 0.01 && currentProgress > 0 ? '>0.01%' : pct.toFixed(2) + '%');
@@ -1509,6 +1465,7 @@
         renderStats();
     }
 
+    // ---------- EFEITOS VISUAIS E CLIQUES ----------
     function showFloatPlus(amount) {
         const rect = makitaBtn.getBoundingClientRect();
         const areaRect = clickArea.getBoundingClientRect();
@@ -1530,7 +1487,7 @@
         img.src = 'images/makitaCoracao.png';
         img.alt = '';
 
-        const size = 1.8 + Math.random() * 1.6; // rem
+        const size = 1.8 + Math.random() * 1.6;
         img.style.width = size + 'rem';
         img.style.height = size + 'rem';
 
@@ -1562,8 +1519,13 @@
         setTimeout(remove, 1200);
     }
 
-    function playClickFeedback() {
-        let gain = (isLocalMode ? calculateLocalClickPower() : serverClickPower) || 1.0;
+    function playClickFeedback(gain) {
+        showFloatPlus(gain);
+        spawnFlyingMakita();
+    }
+
+    makitaBtn.addEventListener('click', () => {
+        let gain = calculateLocalClickPower();
         if (permanentUpgrades.find(u => u.id === 'perm_onipotencia_maker')?.purchased) {
             gain += (mps * 0.30);
         } else if (permanentUpgrades.find(u => u.id === 'perm_sinergia_quantica')?.purchased) {
@@ -1573,33 +1535,18 @@
         } else if (permanentUpgrades.find(u => u.id === 'perm_empunhadura')?.purchased) {
             gain += (mps * 0.05);
         }
-        showFloatPlus(gain);
-        spawnFlyingMakita();
-    }
 
-    makitaBtn.addEventListener('click', () => {
-        playClickFeedback();
+        // Incremento imediato no cliente
+        makitas += gain;
+        totalMakitasMade += gain;
+        playClickFeedback(gain);
+
         if (socket && socket.readyState === WebSocket.OPEN) {
             socket.send('CLICK');
-        } else if (isLocalMode) {
-            let gain = calculateLocalClickPower();
-            if (permanentUpgrades.find(u => u.id === 'perm_onipotencia_maker')?.purchased) {
-                gain += (mps * 0.30);
-            } else if (permanentUpgrades.find(u => u.id === 'perm_sinergia_quantica')?.purchased) {
-                gain += (mps * 0.20);
-            } else if (permanentUpgrades.find(u => u.id === 'perm_overclock')?.purchased) {
-                gain += (mps * 0.10);
-            } else if (permanentUpgrades.find(u => u.id === 'perm_empunhadura')?.purchased) {
-                gain += (mps * 0.05);
-            }
-            makitas += gain;
-            totalMakitasMade += gain;
-            savePermanentProgress();
-            saveLocalState();
-            render();
         }
     });
 
+    // ---------- COMUNICAÇÃO WEBSOCKET E RECONCILIAÇÃO COM O ESP ----------
     function handleSocketMessage(event) {
         let data;
         try {
@@ -1626,14 +1573,12 @@
         }
 
         if (typeof data.makitas === 'number') {
-            if (data.makitas > prevMakitas) {
-                totalMakitasMade += (data.makitas - prevMakitas);
+            // Reconciliação suave: mantém o maior valor para nunca perder cliques rápidos
+            if (data.makitas > makitas) {
+                totalMakitasMade += (data.makitas - makitas);
+                makitas = data.makitas;
             }
-            prevMakitas = data.makitas;
-            makitas = data.makitas;
         }
-        if (typeof data.mps === 'number') mps = data.mps;
-        if (typeof data.clickPower === 'number') serverClickPower = data.clickPower;
         
         if (data.perms && typeof data.perms === 'object') {
             permanentUpgrades.forEach(u => {
@@ -1651,13 +1596,46 @@
             });
         }
 
-        // Salva estado localmente em cache permanente
+        // Atualiza mps e poder de clique oficiais
+        mps = calculateLocalMps();
+        serverClickPower = calculateLocalClickPower();
+
         savePermanentProgress();
         saveLocalState();
-        render();
     }
 
-    // Botão de Reset Total
+    function tryConnectWebSocket() {
+        if (!window.location.hostname || window.location.protocol === 'file:') {
+            logEl.textContent = '🛠️ Modo de Teste Local Ativo (Simulador Offline 60 FPS)';
+            logEl.style.color = 'var(--orange)';
+            return;
+        }
+
+        try {
+            socket = new WebSocket('ws://' + window.location.hostname + ':81/');
+            
+            socket.onopen = () => {
+                logEl.textContent = '⚡ Conectado à Oficina Global (ESP8266)! Renderização 60 FPS Ativa.';
+                logEl.style.color = 'var(--text-lo)';
+            };
+
+            socket.onclose = () => {
+                logEl.textContent = '⚠️ Desconectado do ESP. Simulando localmente a 60 FPS.';
+                logEl.style.color = 'var(--orange)';
+            };
+
+            socket.onerror = () => {
+                logEl.textContent = '⚠️ Conexão offline. Operando em modo autônomo local.';
+                logEl.style.color = 'var(--orange)';
+            };
+
+            socket.onmessage = handleSocketMessage;
+        } catch(e) {
+            logEl.textContent = '⚠️ Operando em modo autônomo local.';
+        }
+    }
+
+    // ---------- BOTÃO DE RESET TOTAL ----------
     const resetGameBtn = document.getElementById('resetGameBtn');
     if (resetGameBtn) {
         resetGameBtn.addEventListener('click', () => {
@@ -1677,25 +1655,48 @@
                     socket.send('RESET');
                 }
 
-                if (isLocalMode) {
-                    serverClickPower = 1.0;
-                }
-
+                serverClickPower = 1.0;
                 render();
             }
         });
     }
 
-    // Carregamento imediato do estado salvo permanente (zero delay no carregamento)
+    // ---------- MOTOR DE RENDERIZAÇÃO CONTÍNUA DO CLIENTE (60 FPS) ----------
+    let lastFrameTime = performance.now();
+    function gameLoop(now) {
+        const dt = Math.min(0.2, (now - lastFrameTime) / 1000.0);
+        lastFrameTime = now;
+
+        mps = calculateLocalMps();
+        if (mps > 0) {
+            const gain = mps * dt;
+            makitas += gain;
+            totalMakitasMade += gain;
+        }
+
+        render();
+        requestAnimationFrame(gameLoop);
+    }
+
+    // ---------- INICIALIZAÇÃO DO JOGO ----------
     loadLocalPermanentProgress();
     loadLocalState();
+    mps = calculateLocalMps();
+    serverClickPower = calculateLocalClickPower();
+
     buildShopList();
+    buildPermTree();
     tryConnectWebSocket();
-    if (isLocalMode) {
-        mps = calculateLocalMps();
-        serverClickPower = calculateLocalClickPower();
-    }
     render();
+
+    // Inicia o motor gráfico suave a 60 FPS
+    requestAnimationFrame(gameLoop);
+
+    // Salva progresso em segundo plano a cada 3 segundos
+    setInterval(() => {
+        savePermanentProgress();
+        saveLocalState();
+    }, 3000);
 </script>
 </body>
 </html>
