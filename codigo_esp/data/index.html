@@ -659,13 +659,25 @@
             <div class="tab-pane is-active" id="tab-perm">
                 <div class="perm-tree-header">
                     <h3 class="perm-tree-title">Árvore de Habilidades & Tecnologias</h3>
-                    <p class="perm-tree-subtitle">Desbloqueie melhorias permanentes produzindo makitas e evoluindo sua tecnologia.</p>
+                    <p class="perm-tree-subtitle">Desbloqueie melhorias permanentes produzindo makitas e evoluindo sua tecnologia até os 99 Bilhões.</p>
                 </div>
                 <div class="perm-tree-grid" id="permTreeGrid"></div>
             </div>
 
             <!-- Aba 2: Estatísticas -->
             <div class="tab-pane" id="tab-stats">
+                <!-- Card de Meta 99B -->
+                <div class="goal-card" style="background: linear-gradient(135deg, #1c1512, #261614); border: 1px solid var(--orange-dim); border-radius: 8px; padding: 1rem 1.2rem; margin-bottom: 1.2rem; box-shadow: 0 4px 14px rgba(0,0,0,0.4);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.55rem;">
+                        <span style="font-size: 0.88rem; font-weight: 700; color: var(--orange); letter-spacing: 0.03em;">🏆 Meta Lendária: 99 Bilhões de Makitas</span>
+                        <span id="goalPercentText" style="font-family: var(--mono); font-size: 0.85rem; font-weight: 700; color: var(--text-hi);">0.00%</span>
+                    </div>
+                    <div style="background: rgba(0,0,0,0.6); border-radius: 6px; height: 12px; overflow: hidden; border: 1px solid rgba(255,255,255,0.12); position: relative;">
+                        <div id="goalProgressBar" style="background: linear-gradient(90deg, var(--red), var(--orange), #ffeb3b); height: 100%; width: 0%; transition: width 0.3s ease; box-shadow: 0 0 10px rgba(255, 143, 67, 0.5);"></div>
+                    </div>
+                    <div id="goalStatusMsg" style="font-size: 0.74rem; color: var(--text-lo); margin-top: 0.45rem;">Rumo à Onipotência Maker no MakerSpace UNIFEI!</div>
+                </div>
+
                 <div class="stats-grid">
                     <div class="stat-card">
                         <div class="stat-card__label">Makitas Atuais</div>
@@ -685,7 +697,7 @@
                     </div>
                     <div class="stat-card">
                         <div class="stat-card__label">Melhorias Desbloqueadas</div>
-                        <div class="stat-card__val" id="statPermCount">0/0</div>
+                        <div class="stat-card__val" id="statPermCount">0/20</div>
                     </div>
                 </div>
 
@@ -719,52 +731,15 @@
 
 <script>
     // =====================================================================
-    // COMUNICAÇÃO COM O ESP32
-    // =====================================================================
-    // O ESP32 é o dono do estado real (makitas, mps, quantos de cada upgrade
-    // cada jogador comprou). O navegador só manda INTENÇÕES ("cliquei",
-    // "quero comprar X") e recebe de volta o estado atualizado — igual ao
-    // padrão cliente/servidor usado no arquivo "Global" que você já tinha.
-    //
-    // Protocolo (texto simples via WebSocket, porta 81, mesmo padrão do
-    // servidor do ESP8266/ESP32 usado antes):
-    //
-    //   Cliente -> ESP32
-    //     "CLICK"              → registra um clique manual
-    //     "BUY:<id>:<qty>"      → pede pra comprar `qty` unidades do upgrade
-    //                            `<id>` (id vem do array `upgrades` abaixo).
-    //                            `<qty>` é um número (1, 10, ...) ou a
-    //                            palavra "max".
-    //                            ex: "BUY:upgrade1:10"  ou  "BUY:upgrade1:max"
-    //
-    //   ESP32 -> Cliente (JSON, mandado a cada clique/compra e idealmente
-    //   também periodicamente pra refletir a produção passiva)
-    //     {
-    //       "makitas": 123.4,
-    //       "mps": 2.5,
-    //       "owned": { "upgrade1": 12, "upgrade2": 3 }
-    //     }
-    //     "owned" é um objeto com a quantidade comprada de CADA upgrade,
-    //     usando o mesmo `id` definido no array `upgrades` logo abaixo.
-    //     O custo de cada upgrade NÃO precisa vir do ESP32: o navegador
-    //     recalcula localmente usando `baseCost`/`growth` de cada upgrade
-    //     e a quantidade `owned` recebida — então o ESP32 só precisa saber
-    //     e devolver "quantas unidades esse jogador já tem" de cada upgrade.
-    //
-    // =====================================================================
     // COMUNICAÇÃO COM O ESP32 / MODO LOCAL DE TESTES (OFFLINE SIMULATOR)
     // =====================================================================
-    // Se aberto direto no navegador (file:// ou sem ESP conectado), o jogo
-    // entra automaticamente em "Modo de Teste Local", simulando a lógica
-    // interna do ESP8266 para permitir desenvolvimento e testes instantâneos.
-    
     let isLocalMode = false;
     let socket = null;
 
     function initLocalSimulation() {
         if (isLocalMode) return;
         isLocalMode = true;
-        logEl.textContent = '🛠️ Modo de Teste Local Ativo (Simulador do ESP)';
+        logEl.textContent = '🛠️ Modo de Teste Local Ativo (Simulador do ESP - Edição 99B)';
         logEl.style.color = 'var(--orange)';
 
         loadLocalPermanentProgress();
@@ -804,13 +779,22 @@
         const permRefrig = permanentUpgrades.find(u => u.id === 'perm_refrigeracao')?.purchased;
         const permNano = permanentUpgrades.find(u => u.id === 'perm_nanobots')?.purchased;
         const permSing = permanentUpgrades.find(u => u.id === 'perm_singularidade')?.purchased;
+        const permFusao = permanentUpgrades.find(u => u.id === 'perm_fusao_fria')?.purchased;
+        const permHiperC = permanentUpgrades.find(u => u.id === 'perm_hiperconducao')?.purchased;
+        const permTaq = permanentUpgrades.find(u => u.id === 'perm_taquions')?.purchased;
+        const permMatEsc = permanentUpgrades.find(u => u.id === 'perm_materia_escura')?.purchased;
+        const permOni = permanentUpgrades.find(u => u.id === 'perm_onipotencia_maker')?.purchased;
 
         let baseMps = 0.0;
         upgrades.forEach(u => {
             baseMps += (owned[u.id] || 0) * u.mps;
         });
 
-        if (permBrush) baseMps *= 2.0;
+        let workshopMult = 1.0;
+        if (permBrush) workshopMult *= 2.0;
+        if (permHiperC) workshopMult *= 3.0;
+        if (permOni) workshopMult *= 4.0;
+        baseMps *= workshopMult;
 
         let mult = 1.0;
         if (permLub) mult += 0.10;
@@ -818,22 +802,23 @@
         if (permBat) mult += 0.25;
         if (permIa) mult += 0.50;
         if (permNano) mult += 0.75;
+        if (permFusao) mult += 1.00;
         if (permSing) mult += 1.50;
+        if (permTaq) mult += 2.00;
+        if (permMatEsc) mult += 3.00;
+        if (permOni) mult += 5.00;
 
         return baseMps * mult;
     }
 
     function calculateLocalClickPower() {
         let power = 1.0;
-        if (permanentUpgrades.find(u => u.id === 'perm_disco_diamante')?.purchased) {
-            power += 1.0;
-        }
-        if (permanentUpgrades.find(u => u.id === 'perm_titanio')?.purchased) {
-            power += 3.0;
-        }
-        if (permanentUpgrades.find(u => u.id === 'perm_singularidade')?.purchased) {
-            power *= 3.0;
-        }
+        if (permanentUpgrades.find(u => u.id === 'perm_disco_diamante')?.purchased) power += 1.0;
+        if (permanentUpgrades.find(u => u.id === 'perm_titanio')?.purchased) power += 3.0;
+        if (permanentUpgrades.find(u => u.id === 'perm_plasma_cutter')?.purchased) power += 25.0;
+        if (permanentUpgrades.find(u => u.id === 'perm_laser_gama')?.purchased) power += 200.0;
+        if (permanentUpgrades.find(u => u.id === 'perm_singularidade')?.purchased) power *= 3.0;
+        if (permanentUpgrades.find(u => u.id === 'perm_hiper_clique')?.purchased) power *= 10.0;
         return power;
     }
 
@@ -885,21 +870,32 @@
     let buyQty = 1;
     const MAX_OWNED = 100;
 
-    // ---------- upgrades da loja ----------
+    // ---------- 24 UPGRADES DA LOJA (PROGRESSÃO ATÉ 99B+) ----------
     const upgrades = [
-        { id: 'upgrade1',       name: 'Bancada Básica',         icon: '⚙️', baseCost: 10,      growth: 1.10, mps: 0.1 },
-        { id: 'upgrade_1mps',   name: 'Esmerilhadeira Manual',   icon: '🪚', baseCost: 100,     growth: 1.12, mps: 1.0 },
-        { id: 'upgrade_2mps',   name: 'Serra Mármore 1400W',    icon: '⚡', baseCost: 250,     growth: 1.12, mps: 2.0 },
-        { id: 'upgrade_5mps',   name: 'Torno Mecânico',         icon: '🔧', baseCost: 750,     growth: 1.13, mps: 5.0 },
-        { id: 'upgrade_10mps',  name: 'Fresadora CNC',          icon: '🎛️', baseCost: 1800,    growth: 1.13, mps: 10.0 },
-        { id: 'upgrade_15mps',  name: 'Robô de Solda Industrial',icon: '🦾', baseCost: 3500,    growth: 1.14, mps: 15.0 },
-        { id: 'upgrade_20mps',  name: 'Cortadora a Laser CO2',  icon: '🔴', baseCost: 6000,    growth: 1.14, mps: 20.0 },
-        { id: 'upgrade_25mps',  name: 'Prensa Hidráulica 50T',  icon: '🏗️', baseCost: 10000,   growth: 1.14, mps: 25.0 },
-        { id: 'upgrade_30mps',  name: 'Impressora 3D de Metal', icon: '🖨️', baseCost: 16000,   growth: 1.15, mps: 30.0 },
-        { id: 'upgrade_50mps',  name: 'Linha de Montagem IA',   icon: '🤖', baseCost: 35000,   growth: 1.15, mps: 50.0 },
-        { id: 'upgrade_100mps', name: 'Mega Fábrica Makita',    icon: '🏭', baseCost: 100000,  growth: 1.15, mps: 100.0 },
-        { id: 'upgrade_200mps', name: 'Reator de Fusão Maker',  icon: '☢️', baseCost: 300000,  growth: 1.16, mps: 200.0 },
-        { id: 'upgrade_500mps', name: 'Estação Espacial Orbital',icon: '🛸', baseCost: 1000000, growth: 1.16, mps: 500.0 }
+        { id: 'upgrade1',          name: 'Bancada Básica',            icon: '⚙️', baseCost: 10,           growth: 1.10, mps: 0.1 },
+        { id: 'upgrade_1mps',      name: 'Esmerilhadeira Manual',      icon: '🪚', baseCost: 100,          growth: 1.12, mps: 1.0 },
+        { id: 'upgrade_2mps',      name: 'Serra Mármore 1400W',       icon: '⚡', baseCost: 250,          growth: 1.12, mps: 2.0 },
+        { id: 'upgrade_5mps',      name: 'Torno Mecânico',            icon: '🔧', baseCost: 750,          growth: 1.13, mps: 5.0 },
+        { id: 'upgrade_10mps',     name: 'Fresadora CNC',             icon: '🎛️', baseCost: 1800,         growth: 1.13, mps: 10.0 },
+        { id: 'upgrade_15mps',     name: 'Robô de Solda Industrial',   icon: '🦾', baseCost: 3500,         growth: 1.14, mps: 15.0 },
+        { id: 'upgrade_20mps',     name: 'Cortadora a Laser CO2',     icon: '🔴', baseCost: 6000,         growth: 1.14, mps: 20.0 },
+        { id: 'upgrade_25mps',     name: 'Prensa Hidráulica 50T',      icon: '🏗️', baseCost: 10000,        growth: 1.14, mps: 25.0 },
+        { id: 'upgrade_30mps',     name: 'Impressora 3D de Metal',    icon: '🖨️', baseCost: 16000,        growth: 1.15, mps: 30.0 },
+        { id: 'upgrade_50mps',     name: 'Linha de Montagem IA',      icon: '🤖', baseCost: 35000,        growth: 1.15, mps: 50.0 },
+        { id: 'upgrade_100mps',    name: 'Mega Fábrica Makita',       icon: '🏭', baseCost: 100000,       growth: 1.15, mps: 100.0 },
+        { id: 'upgrade_200mps',    name: 'Reator de Fusão Maker',     icon: '☢️', baseCost: 300000,       growth: 1.16, mps: 200.0 },
+        { id: 'upgrade_500mps',    name: 'Estação Espacial Orbital',   icon: '🛸', baseCost: 1000000,      growth: 1.16, mps: 500.0 },
+        { id: 'upgrade_1200mps',   name: 'Acelerador de Partículas',  icon: '🌀', baseCost: 3500000,      growth: 1.16, mps: 1200.0 },
+        { id: 'upgrade_3000mps',   name: 'Mineração de Asteroides',   icon: '☄️', baseCost: 12000000,     growth: 1.16, mps: 3000.0 },
+        { id: 'upgrade_8000mps',   name: 'Usina Vulcânica Maker',     icon: '🌋', baseCost: 40000000,     growth: 1.17, mps: 8000.0 },
+        { id: 'upgrade_20kmps',    name: 'Forja de Antimatéria',       icon: '⚛️', baseCost: 150000000,    growth: 1.17, mps: 20000.0 },
+        { id: 'upgrade_60kmps',    name: 'Computador Quântico UNIFEI',icon: '💻', baseCost: 500000000,    growth: 1.17, mps: 60000.0 },
+        { id: 'upgrade_180kmps',   name: 'Esfera de Dyson Makita',    icon: '☀️', baseCost: 1800000000,   growth: 1.17, mps: 180000.0 },
+        { id: 'upgrade_500kmps',   name: 'Portal Dimensional Maker',  icon: '🌌', baseCost: 6000000000,   growth: 1.18, mps: 500000.0 },
+        { id: 'upgrade_1500kmps',  name: 'Manipulador Gravitacional', icon: '🪐', baseCost: 20000000000,  growth: 1.18, mps: 1500000.0 },
+        { id: 'upgrade_5000kmps',  name: 'Motor de Dobra Espacial',   icon: '🚀', baseCost: 60000000000,  growth: 1.18, mps: 5000000.0 },
+        { id: 'upgrade_15000kmps', name: 'Fábrica de Realidade Paralela',icon: '🔮', baseCost: 200000000000,growth: 1.19, mps: 15000000.0 },
+        { id: 'upgrade_50000kmps', name: 'Big Bang Maker Contínuo',   icon: '💥', baseCost: 800000000000, growth: 1.19, mps: 50000000.0 }
     ];
 
     const owned = {};
@@ -926,10 +922,7 @@
     let totalMakitasMade = 0;
     let prevMakitas = 0;
 
-    // ---------- ÁRVORE DE MELHORIAS PERMANENTES ----------
-    // Requisitos:
-    //  - reqMakitas: quantidade mínima de makitas totais produzidas ou no saldo para REVELAR/comprar
-    //  - reqUpgrade: ID de upgrade pré-requisito (precisa ter sido comprado antes)
+    // ---------- 20 HABILIDADES NA ÁRVORE PERMANENTE (ATÉ 99B) ----------
     const permanentUpgrades = [
         {
             id: 'perm_lubrificante',
@@ -1040,6 +1033,96 @@
             reqUpgrade: 'perm_nanobots',
             desc: 'Dobra e meia (+150%) o MPS total e triplica o poder de clique base.',
             purchased: false
+        },
+        {
+            id: 'perm_plasma_cutter',
+            name: 'Cortador a Plasma Estelar',
+            icon: '✨',
+            cost: 5000000,
+            reqMakitas: 1500000,
+            reqUpgrade: 'perm_titanio',
+            desc: 'Corte por jato térmico cósmico. +25.0 de poder a cada clique manual.',
+            purchased: false
+        },
+        {
+            id: 'perm_fusao_fria',
+            name: 'Reator de Fusão Fria Compacta',
+            icon: '🧪',
+            cost: 20000000,
+            reqMakitas: 6000000,
+            reqUpgrade: 'perm_singularidade',
+            desc: 'Energia infinita limpa. +100% de produção passiva global permanente.',
+            purchased: false
+        },
+        {
+            id: 'perm_hiperconducao',
+            name: 'Hipercondutores de Grafeno',
+            icon: '⚡',
+            cost: 80000000,
+            reqMakitas: 25000000,
+            reqUpgrade: 'perm_fusao_fria',
+            desc: 'Zero resistência elétrica. Triplica a eficiência base de todas as oficinas.',
+            purchased: false
+        },
+        {
+            id: 'perm_sinergia_quantica',
+            name: 'Sinergia Quântica de Impacto',
+            icon: '🔮',
+            cost: 300000000,
+            reqMakitas: 100000000,
+            reqUpgrade: 'perm_overclock',
+            desc: 'Ressonância subatômica: Cada clique manual gera 20% do MPS atual!',
+            purchased: false
+        },
+        {
+            id: 'perm_laser_gama',
+            name: 'Emissor Laser de Raios Gama',
+            icon: '🌠',
+            cost: 1200000000,
+            reqMakitas: 400000000,
+            reqUpgrade: 'perm_plasma_cutter',
+            desc: 'Feixe de altíssima frequência. Adiciona +200.0 de poder de clique base.',
+            purchased: false
+        },
+        {
+            id: 'perm_taquions',
+            name: 'Reator de Táquions Espacial',
+            icon: '⏳',
+            cost: 5000000000,
+            reqMakitas: 1500000000,
+            reqUpgrade: 'perm_hiperconducao',
+            desc: 'Dobra a velocidade da linha temporal: +200% de produção global passiva.',
+            purchased: false
+        },
+        {
+            id: 'perm_materia_escura',
+            name: 'Condensador de Matéria Escura',
+            icon: '🌑',
+            cost: 20000000000,
+            reqMakitas: 6000000000,
+            reqUpgrade: 'perm_taquions',
+            desc: 'Colheita da substância que move o cosmos: +300% de produção global passiva.',
+            purchased: false
+        },
+        {
+            id: 'perm_hiper_clique',
+            name: 'Martelo de Fótons Subatômico',
+            icon: '🔨',
+            cost: 50000000000,
+            reqMakitas: 15000000000,
+            reqUpgrade: 'perm_laser_gama',
+            desc: 'Multiplica todo o poder de clique manual por 10x!',
+            purchased: false
+        },
+        {
+            id: 'perm_onipotencia_maker',
+            name: 'Onipotência Maker Cósmica',
+            icon: '👑',
+            cost: 99000000000,
+            reqMakitas: 35000000000,
+            reqUpgrade: 'perm_materia_escura',
+            desc: 'Atinge a perfeição maker: +500% MPS global, quadruplica oficinas e +30% MPS por clique!',
+            purchased: false
         }
     ];
 
@@ -1062,10 +1145,31 @@
     }
 
     function savePermanentProgress() {
-        if (!isLocalMode) return;
         const purchasedIds = permanentUpgrades.filter(u => u.purchased).map(u => u.id);
         localStorage.setItem('makita_perm_upgrades', JSON.stringify(purchasedIds));
         localStorage.setItem('makita_total_produced', totalMakitasMade.toString());
+    }
+
+    function loadLocalState() {
+        const savedState = localStorage.getItem('makita_local_state');
+        if (savedState) {
+            try {
+                const parsed = JSON.parse(savedState);
+                if (typeof parsed.makitas === 'number') {
+                    makitas = parsed.makitas;
+                }
+                if (parsed.owned && typeof parsed.owned === 'object') {
+                    Object.assign(owned, parsed.owned);
+                }
+            } catch(e) {}
+        }
+    }
+
+    function saveLocalState() {
+        localStorage.setItem('makita_local_state', JSON.stringify({
+            makitas: makitas,
+            owned: owned
+        }));
     }
 
     // ---------- CONTROLE DE ABAS ----------
@@ -1085,9 +1189,7 @@
         return Math.ceil(upgrade.baseCost * Math.pow(upgrade.growth, count));
     }
 
-    // custo total para comprar `qty` unidades de uma vez, a partir da
-    // quantidade já possuída — soma o custo de cada unidade individualmente,
-    // já que o preço sobe a cada compra
+    // custo total para comprar `qty` unidades de uma vez
     function costForQuantity(upgrade, qty) {
         let total = 0;
         for (let i = 0; i < qty; i++) {
@@ -1096,25 +1198,40 @@
         return total;
     }
 
-    function formatNumber(n) {
-        return Math.floor(n).toString();
+    // Formatação compacta (k, M, B, T, Qa) com alta precisão e separador brasileiro
+    function formatCompactNumber(n) {
+        if (n == null || isNaN(n)) return '0';
+        if (n < 1000) return Math.floor(n).toString();
+        if (n < 1e6) {
+            const k = n / 1e3;
+            return k.toLocaleString('pt-BR', { minimumFractionDigits: (k < 10 ? 2 : (k < 100 ? 1 : 0)), maximumFractionDigits: (k < 10 ? 2 : (k < 100 ? 1 : 0)) }) + ' k';
+        }
+        if (n < 1e9) {
+            const m = n / 1e6;
+            return m.toLocaleString('pt-BR', { minimumFractionDigits: (m < 10 ? 2 : (m < 100 ? 1 : 0)), maximumFractionDigits: (m < 10 ? 2 : (m < 100 ? 1 : 0)) }) + ' M';
+        }
+        if (n < 1e12) {
+            const b = n / 1e9;
+            return b.toLocaleString('pt-BR', { minimumFractionDigits: (b < 10 ? 2 : (b < 100 ? 1 : 0)), maximumFractionDigits: (b < 10 ? 2 : (b < 100 ? 1 : 0)) }) + ' B';
+        }
+        if (n < 1e15) {
+            const t = n / 1e12;
+            return t.toLocaleString('pt-BR', { minimumFractionDigits: (t < 10 ? 2 : (t < 100 ? 1 : 0)), maximumFractionDigits: (t < 10 ? 2 : (t < 100 ? 1 : 0)) }) + ' T';
+        }
+        const qa = n / 1e15;
+        return qa.toLocaleString('pt-BR', { minimumFractionDigits: (qa < 10 ? 2 : 1), maximumFractionDigits: (qa < 10 ? 2 : 1) }) + ' Qa';
     }
 
-    // texto de descrição do upgrade, recalculado para a quantidade de
-    // compra efetiva (já limitada pelo teto de 100 e, no caso de 'max',
-    // pelo saldo de makitas): mostra quanto de makitas/s aquela compra
-    // vai adicionar
+    function formatFullNumber(n) {
+        if (n == null || isNaN(n)) return '0';
+        return Math.floor(n).toLocaleString('pt-BR');
+    }
+
     function descForQty(upgrade, qty) {
         const gain = upgrade.mps * qty;
-        return `+${gain.toFixed(1)} makita/s (${qty}x)`;
+        return `+${gain >= 1000 ? formatCompactNumber(gain) : gain.toFixed(1)} makita/s (${qty}x)`;
     }
 
-    // calcula quantas unidades REALMENTE serão compradas e por qual custo,
-    // considerando:
-    //   - o teto MAX_OWNED (nenhum upgrade passa de 100 unidades)
-    //   - no modo 'max', o saldo atual de makitas (compra o máximo possível)
-    //   - nos modos 1/10, a quantidade pedida é reduzida se faltar espaço
-    //     até o teto (ex.: faltando 3 pra bater 100, "10x" vira 3x)
     function computeBuy(upgrade) {
         const remaining = MAX_OWNED - owned[upgrade.id];
         if (remaining <= 0) return { qty: 0, cost: 0 };
@@ -1135,7 +1252,6 @@
         return { qty, cost: costForQuantity(upgrade, qty) };
     }
 
-    // troca a quantidade de compra ativa (1, 10 ou 'max')
     function setBuyQty(qty) {
         buyQty = qty;
         shopQtyEl.querySelectorAll('button').forEach(btn => {
@@ -1151,6 +1267,7 @@
 
     // monta os botões da loja uma vez, a partir da lista `upgrades`
     function buildShopList() {
+        shopListEl.innerHTML = '';
         upgrades.forEach(upgrade => {
             const btn = document.createElement('button');
             btn.className = 'shop-item';
@@ -1169,7 +1286,6 @@
         });
     }
 
-    // pede pro ESP32 comprar o upgrade. Em modo local, processa a compra diretamente.
     function buyUpgrade(upgrade) {
         const { qty, cost } = computeBuy(upgrade);
         if (qty <= 0) return;
@@ -1187,12 +1303,10 @@
         }
     }
 
-    // Compra de Melhoria Permanente na Skill Tree
     function buyPermanentUpgrade(perm) {
         if (perm.purchased) return;
         if (makitas < perm.cost) return;
 
-        // Verifica pré-requisito
         if (perm.reqUpgrade) {
             const req = permanentUpgrades.find(u => u.id === perm.reqUpgrade);
             if (req && !req.purchased) return;
@@ -1213,12 +1327,10 @@
         render();
     }
 
-    // Renderiza a árvore de melhorias permanentes
     function renderPermTree() {
         permTreeGridEl.innerHTML = '';
 
         permanentUpgrades.forEach(perm => {
-            // Verifica se o pré-requisito de upgrade anterior foi atendido
             let reqUpgradeMet = true;
             let reqUpgradeName = '';
             if (perm.reqUpgrade) {
@@ -1229,14 +1341,10 @@
                 }
             }
 
-            // Uma melhoria é REVELADA se:
-            // 1. Atingiu a quantidade mínima de makitas OU
-            // 2. O upgrade pré-requisito foi comprado OU
-            // 3. Já está comprada
-            const isRevealed = perm.purchased || reqUpgradeMet || (totalMakitasMade >= perm.reqMakitas) || (makitas >= perm.reqMakitas);
+            const totalAccum = Math.max(totalMakitasMade, makitas);
+            const isRevealed = perm.purchased || reqUpgradeMet || (totalAccum >= perm.reqMakitas);
 
             if (!isRevealed) {
-                // Bloco oculto/bloqueado estilo névoa de guerra
                 const lockedNode = document.createElement('div');
                 lockedNode.className = 'perm-node status-locked';
                 lockedNode.innerHTML = `
@@ -1248,13 +1356,12 @@
                         </div>
                     </div>
                     <div class="perm-node__desc">Produza mais makitas ou desbloqueie tecnologias anteriores para revelar esta melhoria.</div>
-                    <div class="perm-node__reqs">Requer: ${perm.reqMakitas} makitas acumuladas</div>
+                    <div class="perm-node__reqs">Requer: ${formatCompactNumber(perm.reqMakitas)} makitas acumuladas</div>
                 `;
                 permTreeGridEl.appendChild(lockedNode);
                 return;
             }
 
-            // Status do nó
             let statusClass = 'status-available';
             let badgeText = 'Disponível';
             let isPurchasable = reqUpgradeMet && (makitas >= perm.cost) && !perm.purchased;
@@ -1280,9 +1387,9 @@
                 btnHtml = `<button class="perm-node__btn" disabled style="background:#1b5e20;"><span>Ativo</span> <span>✓</span></button>`;
             } else {
                 btnHtml = `
-                    <button class="perm-node__btn" id="btn-perm-${perm.id}" ${!isPurchasable ? 'disabled' : ''}>
+                    <button class="perm-node__btn" id="btn-perm-${perm.id}" ${!isPurchasable ? 'disabled' : ''} title="${formatFullNumber(perm.cost)} Makitas">
                         <span>Comprar</span>
-                        <span>${perm.cost} makitas</span>
+                        <span>${formatCompactNumber(perm.cost)}</span>
                     </button>
                 `;
             }
@@ -1312,15 +1419,25 @@
     }
 
     function renderStats() {
-        statMakitasEl.textContent = formatNumber(makitas);
-        statTotalMakitasEl.textContent = formatNumber(Math.max(totalMakitasMade, makitas));
-        statMpsEl.textContent = mps.toFixed(1);
+        statMakitasEl.textContent = formatCompactNumber(makitas);
+        statMakitasEl.title = formatFullNumber(makitas) + ' Makitas';
+        
+        const total = Math.max(totalMakitasMade, makitas);
+        statTotalMakitasEl.textContent = formatCompactNumber(total);
+        statTotalMakitasEl.title = formatFullNumber(total) + ' Makitas';
+        
+        statMpsEl.textContent = mps >= 1000 ? formatCompactNumber(mps) + '/s' : mps.toFixed(1) + '/s';
+        statMpsEl.title = mps.toLocaleString('pt-BR') + ' Makitas por segundo';
 
         // Calcula poder de clique com bônus de melhorias permanentes
         let clickPower = (isLocalMode ? calculateLocalClickPower() : serverClickPower) || 1.0;
         
         let synergyPct = 0;
-        if (permanentUpgrades.find(u => u.id === 'perm_overclock')?.purchased) {
+        if (permanentUpgrades.find(u => u.id === 'perm_onipotencia_maker')?.purchased) {
+            synergyPct = 0.30;
+        } else if (permanentUpgrades.find(u => u.id === 'perm_sinergia_quantica')?.purchased) {
+            synergyPct = 0.20;
+        } else if (permanentUpgrades.find(u => u.id === 'perm_overclock')?.purchased) {
             synergyPct = 0.10;
         } else if (permanentUpgrades.find(u => u.id === 'perm_empunhadura')?.purchased) {
             synergyPct = 0.05;
@@ -1328,28 +1445,64 @@
 
         if (synergyPct > 0) {
             const extra = (mps * synergyPct);
-            statClickPowerEl.textContent = `${clickPower.toFixed(1)} (+${extra.toFixed(1)}/s)`;
+            statClickPowerEl.textContent = `${formatCompactNumber(clickPower)} (+${formatCompactNumber(extra)}/s)`;
         } else {
-            statClickPowerEl.textContent = clickPower.toFixed(1);
+            statClickPowerEl.textContent = formatCompactNumber(clickPower);
         }
+        statClickPowerEl.title = clickPower.toLocaleString('pt-BR') + ' por clique base';
 
         const purchasedCount = permanentUpgrades.filter(u => u.purchased).length;
         statPermCountEl.textContent = `${purchasedCount}/${permanentUpgrades.length}`;
+
+        // Meta 99B
+        const goalTotal = 99000000000;
+        const currentProgress = Math.max(makitas, totalMakitasMade);
+        const pct = Math.min(100, (currentProgress / goalTotal) * 100);
+        const goalPercentTextEl = document.getElementById('goalPercentText');
+        const goalProgressBarEl = document.getElementById('goalProgressBar');
+        const goalStatusMsgEl = document.getElementById('goalStatusMsg');
+
+        if (goalPercentTextEl && goalProgressBarEl) {
+            goalPercentTextEl.textContent = pct >= 100 ? '100.00% CONCLUÍDO! 👑' : (pct < 0.01 && currentProgress > 0 ? '>0.01%' : pct.toFixed(2) + '%');
+            goalProgressBarEl.style.width = Math.min(100, pct) + '%';
+            if (pct >= 100) {
+                goalStatusMsgEl.textContent = '🎉 PARABÉNS! Você atingiu a Meta Lendária de 99 Bilhões no MakerSpace UNIFEI!';
+                goalStatusMsgEl.style.color = '#a5d6a7';
+            } else {
+                const remaining = Math.max(0, goalTotal - currentProgress);
+                goalStatusMsgEl.textContent = `Faltam ${formatCompactNumber(remaining)} makitas para a Onipotência Maker (99B).`;
+                goalStatusMsgEl.style.color = 'var(--text-lo)';
+            }
+        }
     }
 
     function render() {
-        counterEl.textContent = formatNumber(makitas);
-        rateEl.textContent = mps.toFixed(1);
+        counterEl.textContent = formatCompactNumber(makitas);
+        counterEl.title = formatFullNumber(makitas) + ' Makitas';
+        rateEl.textContent = mps >= 1000 ? formatCompactNumber(mps) : mps.toFixed(1);
+        rateEl.title = mps.toLocaleString('pt-BR') + ' por segundo';
 
         upgrades.forEach(upgrade => {
             const capped = owned[upgrade.id] >= MAX_OWNED;
             const { qty, cost } = computeBuy(upgrade);
 
-            document.getElementById('cost-' + upgrade.id).textContent = capped ? '—' : cost;
-            document.getElementById('owned-' + upgrade.id).textContent = owned[upgrade.id];
-            document.getElementById('desc-' + upgrade.id).textContent =
-                capped ? 'nível máximo atingido' : descForQty(upgrade, qty);
-            document.getElementById('buy-' + upgrade.id).disabled = capped || qty <= 0 || makitas < cost;
+            const costEl = document.getElementById('cost-' + upgrade.id);
+            if (costEl) {
+                costEl.textContent = capped ? '—' : formatCompactNumber(cost);
+                costEl.title = capped ? 'Máximo atingido' : formatFullNumber(cost) + ' Makitas';
+            }
+            const ownedEl = document.getElementById('owned-' + upgrade.id);
+            if (ownedEl) ownedEl.textContent = owned[upgrade.id];
+
+            const descEl = document.getElementById('desc-' + upgrade.id);
+            if (descEl) {
+                descEl.textContent = capped ? 'nível máximo atingido (100 un.)' : descForQty(upgrade, qty);
+            }
+
+            const buyBtn = document.getElementById('buy-' + upgrade.id);
+            if (buyBtn) {
+                buyBtn.disabled = capped || qty <= 0 || makitas < cost;
+            }
         });
 
         renderPermTree();
@@ -1361,15 +1514,13 @@
         const areaRect = clickArea.getBoundingClientRect();
         const el = document.createElement('span');
         el.className = 'float-plus';
-        el.textContent = '+' + (amount % 1 === 0 ? amount : amount.toFixed(1));
+        el.textContent = '+' + (amount >= 1000 ? formatCompactNumber(amount) : (amount % 1 === 0 ? amount : amount.toFixed(1)));
         el.style.left = (rect.left - areaRect.left + rect.width / 2) + 'px';
         el.style.top = (rect.top - areaRect.top) + 'px';
         clickArea.appendChild(el);
         el.addEventListener('animationend', () => el.remove());
     }
 
-    // dispara uma imagem "voando" a partir do centro do clicker — uma a
-    // cada clique, saindo em uma direção/rotação/tamanho aleatórios.
     function spawnFlyingMakita() {
         const rect = makitaBtn.getBoundingClientRect();
         const areaRect = clickArea.getBoundingClientRect();
@@ -1383,7 +1534,6 @@
         img.style.width = size + 'rem';
         img.style.height = size + 'rem';
 
-        // posição inicial: centro do botão, relativa à área de clique
         const startX = rect.left - areaRect.left + rect.width / 2;
         const startY = rect.top - areaRect.top + rect.height / 2;
         img.style.left = startX + 'px';
@@ -1391,14 +1541,12 @@
 
         clickArea.appendChild(img);
 
-        // direção aleatória em qualquer sentido, distância variável
         const angle = Math.random() * Math.PI * 2;
         const distance = 90 + Math.random() * 140;
         const tx = Math.cos(angle) * distance;
-        const ty = Math.sin(angle) * distance - 40; // leve tendência pra cima
+        const ty = Math.sin(angle) * distance - 40;
         const rot = Math.random() * 720 - 360;
 
-        // eslint-disable-next-line no-unused-expressions
         img.offsetWidth;
 
         img.style.transform = `translate(calc(-50% + ${tx.toFixed(1)}px), calc(-50% + ${ty.toFixed(1)}px)) rotate(${rot.toFixed(0)}deg) scale(.8)`;
@@ -1414,10 +1562,13 @@
         setTimeout(remove, 1200);
     }
 
-    // feedback visual instantâneo do clique — não mexe em `makitas`/`mps`
     function playClickFeedback() {
         let gain = (isLocalMode ? calculateLocalClickPower() : serverClickPower) || 1.0;
-        if (permanentUpgrades.find(u => u.id === 'perm_overclock')?.purchased) {
+        if (permanentUpgrades.find(u => u.id === 'perm_onipotencia_maker')?.purchased) {
+            gain += (mps * 0.30);
+        } else if (permanentUpgrades.find(u => u.id === 'perm_sinergia_quantica')?.purchased) {
+            gain += (mps * 0.20);
+        } else if (permanentUpgrades.find(u => u.id === 'perm_overclock')?.purchased) {
             gain += (mps * 0.10);
         } else if (permanentUpgrades.find(u => u.id === 'perm_empunhadura')?.purchased) {
             gain += (mps * 0.05);
@@ -1426,14 +1577,17 @@
         spawnFlyingMakita();
     }
 
-    // clique manual — mesma ação que o botão físico do ESP32 vai disparar.
     makitaBtn.addEventListener('click', () => {
         playClickFeedback();
         if (socket && socket.readyState === WebSocket.OPEN) {
             socket.send('CLICK');
         } else if (isLocalMode) {
             let gain = calculateLocalClickPower();
-            if (permanentUpgrades.find(u => u.id === 'perm_overclock')?.purchased) {
+            if (permanentUpgrades.find(u => u.id === 'perm_onipotencia_maker')?.purchased) {
+                gain += (mps * 0.30);
+            } else if (permanentUpgrades.find(u => u.id === 'perm_sinergia_quantica')?.purchased) {
+                gain += (mps * 0.20);
+            } else if (permanentUpgrades.find(u => u.id === 'perm_overclock')?.purchased) {
                 gain += (mps * 0.10);
             } else if (permanentUpgrades.find(u => u.id === 'perm_empunhadura')?.purchased) {
                 gain += (mps * 0.05);
@@ -1446,26 +1600,34 @@
         }
     });
 
-    // recebe o estado atualizado do ESP32
     function handleSocketMessage(event) {
         let data;
         try {
             data = JSON.parse(event.data);
         } catch (err) {
-            console.error('Mensagem inválida do ESP32:', event.data, err);
+            console.error('Mensagem inválida do ESP:', event.data, err);
+            return;
+        }
+
+        // Se o servidor transmitiu um comando explícito de reset:
+        if (data.isReset === true) {
+            localStorage.removeItem('makita_perm_upgrades');
+            localStorage.removeItem('makita_total_produced');
+            localStorage.removeItem('makita_local_state');
+
+            makitas = 0;
+            mps = 0;
+            totalMakitasMade = 0;
+            prevMakitas = 0;
+            upgrades.forEach(u => { owned[u.id] = 0; });
+            permanentUpgrades.forEach(u => { u.purchased = false; });
+            render();
             return;
         }
 
         if (typeof data.makitas === 'number') {
-            if (data.makitas === 0 && prevMakitas > 0) {
-                // Reset detectado do servidor
-                totalMakitasMade = 0;
-                localStorage.removeItem('makita_total_produced');
-                localStorage.removeItem('makita_perm_upgrades');
-                localStorage.removeItem('makita_local_state');
-            } else if (data.makitas > prevMakitas) {
+            if (data.makitas > prevMakitas) {
                 totalMakitasMade += (data.makitas - prevMakitas);
-                savePermanentProgress();
             }
             prevMakitas = data.makitas;
             makitas = data.makitas;
@@ -1475,9 +1637,10 @@
         
         if (data.perms && typeof data.perms === 'object') {
             permanentUpgrades.forEach(u => {
-                u.purchased = (data.perms[u.id] === true);
+                if (u.id in data.perms) {
+                    u.purchased = (data.perms[u.id] === true);
+                }
             });
-            savePermanentProgress();
         }
 
         if (data.owned && typeof data.owned === 'object') {
@@ -1488,6 +1651,9 @@
             });
         }
 
+        // Salva estado localmente em cache permanente
+        savePermanentProgress();
+        saveLocalState();
         render();
     }
 
@@ -1496,12 +1662,10 @@
     if (resetGameBtn) {
         resetGameBtn.addEventListener('click', () => {
             if (confirm('Tem certeza que deseja resetar TODO o seu progresso (saldo, melhorias e estatísticas)?')) {
-                // Limpa storage local
                 localStorage.removeItem('makita_perm_upgrades');
                 localStorage.removeItem('makita_total_produced');
                 localStorage.removeItem('makita_local_state');
 
-                // Reseta estado na memória do cliente
                 makitas = 0;
                 mps = 0;
                 totalMakitasMade = 0;
@@ -1522,6 +1686,9 @@
         });
     }
 
+    // Carregamento imediato do estado salvo permanente (zero delay no carregamento)
+    loadLocalPermanentProgress();
+    loadLocalState();
     buildShopList();
     tryConnectWebSocket();
     if (isLocalMode) {

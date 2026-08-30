@@ -72,18 +72,18 @@ Qualquer dispositivo na mesma rede Wi-Fi acessa `http://esp-painel.local` (ou pe
 
 ### Arduino Mega (`codigo_arduino/codigo_arduino.ino`)
 
-- Lê o botão físico no Pino 7 com debounce de 40ms
-- Ao pressionar: envia `CLICK\n` pela `Serial` (115200 baud) para o ESP
-- Escuta a `Serial` aguardando pacotes `MAKITA:<valor>,<mps>` enviados pelo ESP
-- Atualiza o LCD 20×4 com o saldo e taxa de produção recebidos
+- Lê o botão físico no Pino 7 com debounce rápido de 35ms
+- Ao pressionar: incrementa saldo local instantaneamente e envia `CLICK\n` pela `Serial` (115200 baud) para o ESP
+- Escuta a `Serial` aguardando pacotes `MAKITA:<saldo>,<mps>,<clickPower>,<totalOwned>` enviados pelo ESP
+- Atualiza o LCD 20×4 com animações em tempo real, caracteres customizados (lâmina giratória, moedas, faíscas, troféu 99B) e carrossel de telemetria com porcentagem da Meta de 99 Bilhões
 
 ### ESP8266 (`codigo_esp/codigo_esp.ino`)
 
 Ao ligar, o ESP executa em sequência:
 
 ```
-1. Inicia Serial USB (115200) e megaSerial (115200)
-2. Monta a partição LittleFS
+1. Inicia CPU em 160MHz, Serial USB (115200) e megaSerial (115200)
+2. Inicializa EEPROM (128 bytes) e monta a partição LittleFS
 3. Conecta à rede Wi-Fi "MakerSpace UNIFEI"
 4. Executa checkOTA():
    a. Verifica versão do Mega -> grava se houver novidade (STK500v2)
@@ -92,8 +92,8 @@ Ao ligar, o ESP executa em sequência:
 5. Executa resetMega() -> sincroniza o boot e LCD do Arduino Mega
 6. Registra rotas HTTP (/, imagens)
 7. Inicia WebServer (porta 80) e WebSocketServer (porta 81)
-8. Carrega o estado salvo (/gamestate.json)
-9. Entra no loop principal
+8. Carrega o estado salvo (/gamestate.json com espelhamento EEPROM)
+9. Entra no loop principal (24 oficinas, 20 tecnologias, produção passiva a cada 100ms)
 ```
 
 ---

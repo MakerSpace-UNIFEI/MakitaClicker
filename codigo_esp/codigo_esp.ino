@@ -11,22 +11,22 @@
 #include <ArduinoJson.h>
 #include <EEPROM.h>
 
-const int NUM_UPGRADES = 13;
+const int NUM_UPGRADES = 24;
 
 struct UpgradeConfig {
   const char* id;
-  int baseCost;
+  double baseCost;
   float growth;
-  float mps;
+  double mps;
 };
 
-#define EEPROM_MAGIC 0x4D4B5432 // "MKT2"
+#define EEPROM_MAGIC 0x4D4B5433 // "MKT3"
 
 struct EEPROMState {
   uint32_t magic;
   double makitas;
-  uint8_t owned[NUM_UPGRADES]; // 13 upgrades
-  uint16_t perms; // bitmask para até 16 perms
+  uint8_t owned[NUM_UPGRADES]; // 24 upgrades (24 bytes)
+  uint32_t perms; // bitmask para até 32 perms (20 em uso)
   uint8_t checksum;
 };
 
@@ -323,39 +323,59 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
 }
 
 // ===== ESTADO DO JOGO =====
-double makitas = 0;
+double makitas = 0.0;
 const int MAX_OWNED = 100;
 
 const UpgradeConfig UPGRADE_CONFIGS[NUM_UPGRADES] = {
-  { "upgrade1",    10,        1.10, 0.1 },  // +0.1 mps
-  { "upgrade_1mps",   100,       1.12, 1.0 },  // +1 mps
-  { "upgrade_2mps",   250,       1.12, 2.0 },  // +2 mps
-  { "upgrade_5mps",   750,       1.13, 5.0 },  // +5 mps
-  { "upgrade_10mps",  1800,      1.13, 10.0 }, // +10 mps
-  { "upgrade_15mps",  3500,      1.14, 15.0 }, // +15 mps
-  { "upgrade_20mps",  6000,      1.14, 20.0 }, // +20 mps
-  { "upgrade_25mps",  10000,     1.14, 25.0 }, // +25 mps
-  { "upgrade_30mps",  16000,     1.15, 30.0 }, // +30 mps
-  { "upgrade_50mps",  35000,     1.15, 50.0 }, // +50 mps
-  { "upgrade_100mps", 100000,    1.15, 100.0 },// +100 mps
-  { "upgrade_200mps", 300000,    1.16, 200.0 },// +200 mps
-  { "upgrade_500mps", 1000000,   1.16, 500.0 } // +500 mps
+  { "upgrade1",          10.0,         1.10, 0.1 },        // +0.1 MPS
+  { "upgrade_1mps",      100.0,        1.12, 1.0 },        // +1.0 MPS
+  { "upgrade_2mps",      250.0,        1.12, 2.0 },        // +2.0 MPS
+  { "upgrade_5mps",      750.0,        1.13, 5.0 },        // +5.0 MPS
+  { "upgrade_10mps",     1800.0,       1.13, 10.0 },       // +10.0 MPS
+  { "upgrade_15mps",     3500.0,       1.14, 15.0 },       // +15.0 MPS
+  { "upgrade_20mps",     6000.0,       1.14, 20.0 },       // +20.0 MPS
+  { "upgrade_25mps",     10000.0,      1.14, 25.0 },       // +25.0 MPS
+  { "upgrade_30mps",     16000.0,      1.15, 30.0 },       // +30.0 MPS
+  { "upgrade_50mps",     35000.0,      1.15, 50.0 },       // +50.0 MPS
+  { "upgrade_100mps",    100000.0,     1.15, 100.0 },      // +100.0 MPS
+  { "upgrade_200mps",    300000.0,     1.16, 200.0 },      // +200.0 MPS
+  { "upgrade_500mps",    1000000.0,    1.16, 500.0 },      // +500.0 MPS
+  { "upgrade_1200mps",   3500000.0,    1.16, 1200.0 },     // +1.2k MPS
+  { "upgrade_3000mps",   12000000.0,   1.16, 3000.0 },     // +3.0k MPS
+  { "upgrade_8000mps",   40000000.0,   1.17, 8000.0 },     // +8.0k MPS
+  { "upgrade_20kmps",    150000000.0,  1.17, 20000.0 },    // +20k MPS
+  { "upgrade_60kmps",    500000000.0,  1.17, 60000.0 },    // +60k MPS
+  { "upgrade_180kmps",   1800000000.0, 1.17, 180000.0 },   // +180k MPS
+  { "upgrade_500kmps",   6000000000.0, 1.18, 500000.0 },   // +500k MPS
+  { "upgrade_1500kmps",  20000000000.0,1.18, 1500000.0 },  // +1.5M MPS
+  { "upgrade_5000kmps",  60000000000.0,1.18, 5000000.0 },  // +5.0M MPS
+  { "upgrade_15000kmps", 200000000000.0,1.19,15000000.0 }, // +15.0M MPS
+  { "upgrade_50000kmps", 800000000000.0,1.19,50000000.0 }  // +50.0M MPS
 };
 
 int ownedUpgrades[NUM_UPGRADES] = {0};
 
-// Melhorias permanentes ativas
-bool permLubrificante = false;   // +10% MPS global
-bool permDiscoDiamante = false;  // +1.0 poder de clique
-bool permMotorBrushless = false; // +100% (2x) ganho base das oficinas
-bool permEmpunhadura = false;    // clique manual gera +5% do MPS atual
-bool permBateriaLitio = false;   // +25% MPS global
-bool permIaMaker = false;        // +50% MPS global
-bool permRefrigeracao = false;   // +20% MPS global
-bool permTitanio = false;        // +3.0 poder de clique
-bool permOverclock = false;      // Dobra a sinergia de clique (+10% do MPS)
-bool permNanobots = false;       // +75% MPS global
-bool permSingularidade = false;  // +150% MPS global e triplica o clique base
+// 20 Melhorias permanentes ativas (Skill Tree)
+bool permLubrificante = false;      // (bit 0)  +10% MPS global
+bool permDiscoDiamante = false;     // (bit 1)  +1.0 poder de clique
+bool permMotorBrushless = false;    // (bit 2)  2x ganho base das oficinas
+bool permEmpunhadura = false;       // (bit 3)  clique gera +5% do MPS atual
+bool permBateriaLitio = false;      // (bit 4)  +25% MPS global
+bool permIaMaker = false;           // (bit 5)  +50% MPS global
+bool permRefrigeracao = false;      // (bit 6)  +20% MPS global
+bool permTitanio = false;           // (bit 7)  +3.0 poder de clique
+bool permOverclock = false;         // (bit 8)  sinergia de clique passa a +10% do MPS
+bool permNanobots = false;          // (bit 9)  +75% MPS global
+bool permSingularidade = false;     // (bit 10) +150% MPS global e triplica clique base
+bool permPlasmaCutter = false;      // (bit 11) +25.0 poder de clique
+bool permFusaoFria = false;         // (bit 12) +100% MPS global
+bool permHiperconducao = false;     // (bit 13) 3x produção base das oficinas
+bool permSinergiaQuantica = false;  // (bit 14) sinergia de clique passa a +20% do MPS
+bool permLaserGama = false;         // (bit 15) +200.0 poder de clique
+bool permTaquions = false;          // (bit 16) +200% MPS global
+bool permMateriaEscura = false;     // (bit 17) +300% MPS global
+bool permHiperClique = false;       // (bit 18) 10x multiplicador de poder de clique
+bool permOnipotenciaMaker = false;  // (bit 19) +500% MPS global, +30% MPS/clique, 4x oficinas
 
 unsigned long lastTick = 0;
 unsigned long lastBroadcast = 0;
@@ -367,33 +387,47 @@ int getUpgradeIndex(const String &id) {
   return -1;
 }
 
-int unitCost(int index, int count) {
-  if (index < 0 || index >= NUM_UPGRADES) return 99999999;
-  return ceil(UPGRADE_CONFIGS[index].baseCost * pow(UPGRADE_CONFIGS[index].growth, count));
+double unitCost(int index, int count) {
+  if (index < 0 || index >= NUM_UPGRADES) return 1e18;
+  return ceil(UPGRADE_CONFIGS[index].baseCost * pow((double)UPGRADE_CONFIGS[index].growth, count));
 }
 
-float getClickPower() {
-  float power = 1.0;
+double getClickPower() {
+  double power = 1.0;
   if (permDiscoDiamante) power += 1.0;
   if (permTitanio) power += 3.0;
+  if (permPlasmaCutter) power += 25.0;
+  if (permLaserGama) power += 200.0;
   if (permSingularidade) power *= 3.0;
+  if (permHiperClique) power *= 10.0;
   return power;
 }
 
-float getTotalMps() {
-  float baseMps = 0.0;
+double getTotalMps() {
+  double baseMps = 0.0;
   for (int i = 0; i < NUM_UPGRADES; i++) {
-    baseMps += (ownedUpgrades[i] * UPGRADE_CONFIGS[i].mps);
+    baseMps += ((double)ownedUpgrades[i] * UPGRADE_CONFIGS[i].mps);
   }
-  if (permMotorBrushless) baseMps *= 2.0; // Dobra o ganho base das oficinas
   
-  float multiplier = 1.0;
+  // Multiplicadores base de oficinas
+  double workshopMultiplier = 1.0;
+  if (permMotorBrushless) workshopMultiplier *= 2.0;
+  if (permHiperconducao) workshopMultiplier *= 3.0;
+  if (permOnipotenciaMaker) workshopMultiplier *= 4.0;
+  baseMps *= workshopMultiplier;
+
+  // Multiplicadores globais percentuais aditivos
+  double multiplier = 1.0;
   if (permLubrificante) multiplier += 0.10;
   if (permRefrigeracao) multiplier += 0.20;
   if (permBateriaLitio) multiplier += 0.25;
   if (permIaMaker) multiplier += 0.50;
   if (permNanobots) multiplier += 0.75;
+  if (permFusaoFria) multiplier += 1.00;
   if (permSingularidade) multiplier += 1.50;
+  if (permTaquions) multiplier += 2.00;
+  if (permMateriaEscura) multiplier += 3.00;
+  if (permOnipotenciaMaker) multiplier += 5.00;
 
   return baseMps * multiplier;
 }
@@ -421,7 +455,16 @@ String getGameStateJSON() {
   json += "\"perm_titanio\":" + String(permTitanio ? "true" : "false") + ",";
   json += "\"perm_overclock\":" + String(permOverclock ? "true" : "false") + ",";
   json += "\"perm_nanobots\":" + String(permNanobots ? "true" : "false") + ",";
-  json += "\"perm_singularidade\":" + String(permSingularidade ? "true" : "false");
+  json += "\"perm_singularidade\":" + String(permSingularidade ? "true" : "false") + ",";
+  json += "\"perm_plasma_cutter\":" + String(permPlasmaCutter ? "true" : "false") + ",";
+  json += "\"perm_fusao_fria\":" + String(permFusaoFria ? "true" : "false") + ",";
+  json += "\"perm_hiperconducao\":" + String(permHiperconducao ? "true" : "false") + ",";
+  json += "\"perm_sinergia_quantica\":" + String(permSinergiaQuantica ? "true" : "false") + ",";
+  json += "\"perm_laser_gama\":" + String(permLaserGama ? "true" : "false") + ",";
+  json += "\"perm_taquions\":" + String(permTaquions ? "true" : "false") + ",";
+  json += "\"perm_materia_escura\":" + String(permMateriaEscura ? "true" : "false") + ",";
+  json += "\"perm_hiper_clique\":" + String(permHiperClique ? "true" : "false") + ",";
+  json += "\"perm_onipotencia_maker\":" + String(permOnipotenciaMaker ? "true" : "false");
   json += "}}";
   return json;
 }
@@ -431,7 +474,7 @@ void notifyMega() {
   for (int i = 0; i < NUM_UPGRADES; i++) {
     totalOwned += ownedUpgrades[i];
   }
-  String payload = "MAKITA:" + String((long)makitas) + "," + String(getTotalMps(), 1) + "," + String(getClickPower(), 1) + "," + String(totalOwned);
+  String payload = "MAKITA:" + String(makitas, 1) + "," + String(getTotalMps(), 1) + "," + String(getClickPower(), 1) + "," + String(totalOwned);
   megaSerial.println(payload);
 }
 
@@ -442,11 +485,16 @@ void broadcastState() {
 }
 
 void handleClick() {
-  float gain = getClickPower();
-  if (permOverclock) {
-    gain += (getTotalMps() * 0.10);
+  double gain = getClickPower();
+  double currentMps = getTotalMps();
+  if (permOnipotenciaMaker) {
+    gain += (currentMps * 0.30);
+  } else if (permSinergiaQuantica) {
+    gain += (currentMps * 0.20);
+  } else if (permOverclock) {
+    gain += (currentMps * 0.10);
   } else if (permEmpunhadura) {
-    gain += (getTotalMps() * 0.05);
+    gain += (currentMps * 0.05);
   }
   makitas += gain;
   broadcastState();
@@ -461,7 +509,7 @@ void processBuy(int index, String qtyStr) {
 
   if (qtyStr == "max") {
     while (ownedUpgrades[index] < MAX_OWNED) {
-      int cost = unitCost(index, ownedUpgrades[index]);
+      double cost = unitCost(index, ownedUpgrades[index]);
       if (makitas < cost) break;
       makitas -= cost;
       ownedUpgrades[index]++;
@@ -471,7 +519,7 @@ void processBuy(int index, String qtyStr) {
     int toBuy = min(requested, remaining);
     
     // Calcula custo total do lote
-    int totalCost = 0;
+    double totalCost = 0;
     for (int i = 0; i < toBuy; i++) {
       totalCost += unitCost(index, ownedUpgrades[index] + i);
     }
@@ -481,6 +529,7 @@ void processBuy(int index, String qtyStr) {
       ownedUpgrades[index] += toBuy;
     }
   }
+  saveGameState();
   broadcastState();
 }
 
@@ -501,17 +550,26 @@ void saveEEPROM() {
     s.owned[i] = (uint8_t)ownedUpgrades[i];
   }
   s.perms = 0;
-  if (permLubrificante)    s.perms |= (1 << 0);
-  if (permDiscoDiamante)   s.perms |= (1 << 1);
-  if (permMotorBrushless)  s.perms |= (1 << 2);
-  if (permEmpunhadura)     s.perms |= (1 << 3);
-  if (permBateriaLitio)    s.perms |= (1 << 4);
-  if (permIaMaker)         s.perms |= (1 << 5);
-  if (permRefrigeracao)    s.perms |= (1 << 6);
-  if (permTitanio)         s.perms |= (1 << 7);
-  if (permOverclock)       s.perms |= (1 << 8);
-  if (permNanobots)        s.perms |= (1 << 9);
-  if (permSingularidade)   s.perms |= (1 << 10);
+  if (permLubrificante)      s.perms |= ((uint32_t)1 << 0);
+  if (permDiscoDiamante)     s.perms |= ((uint32_t)1 << 1);
+  if (permMotorBrushless)    s.perms |= ((uint32_t)1 << 2);
+  if (permEmpunhadura)       s.perms |= ((uint32_t)1 << 3);
+  if (permBateriaLitio)      s.perms |= ((uint32_t)1 << 4);
+  if (permIaMaker)           s.perms |= ((uint32_t)1 << 5);
+  if (permRefrigeracao)      s.perms |= ((uint32_t)1 << 6);
+  if (permTitanio)           s.perms |= ((uint32_t)1 << 7);
+  if (permOverclock)         s.perms |= ((uint32_t)1 << 8);
+  if (permNanobots)          s.perms |= ((uint32_t)1 << 9);
+  if (permSingularidade)     s.perms |= ((uint32_t)1 << 10);
+  if (permPlasmaCutter)      s.perms |= ((uint32_t)1 << 11);
+  if (permFusaoFria)         s.perms |= ((uint32_t)1 << 12);
+  if (permHiperconducao)     s.perms |= ((uint32_t)1 << 13);
+  if (permSinergiaQuantica)  s.perms |= ((uint32_t)1 << 14);
+  if (permLaserGama)         s.perms |= ((uint32_t)1 << 15);
+  if (permTaquions)          s.perms |= ((uint32_t)1 << 16);
+  if (permMateriaEscura)     s.perms |= ((uint32_t)1 << 17);
+  if (permHiperClique)       s.perms |= ((uint32_t)1 << 18);
+  if (permOnipotenciaMaker)  s.perms |= ((uint32_t)1 << 19);
   s.checksum = calcChecksum(s);
 
   EEPROM.put(0, s);
@@ -528,17 +586,26 @@ bool loadEEPROM() {
   for (int i = 0; i < NUM_UPGRADES; i++) {
     ownedUpgrades[i] = s.owned[i];
   }
-  permLubrificante   = (s.perms & (1 << 0)) != 0;
-  permDiscoDiamante  = (s.perms & (1 << 1)) != 0;
-  permMotorBrushless = (s.perms & (1 << 2)) != 0;
-  permEmpunhadura    = (s.perms & (1 << 3)) != 0;
-  permBateriaLitio   = (s.perms & (1 << 4)) != 0;
-  permIaMaker        = (s.perms & (1 << 5)) != 0;
-  permRefrigeracao   = (s.perms & (1 << 6)) != 0;
-  permTitanio        = (s.perms & (1 << 7)) != 0;
-  permOverclock      = (s.perms & (1 << 8)) != 0;
-  permNanobots       = (s.perms & (1 << 9)) != 0;
-  permSingularidade  = (s.perms & (1 << 10)) != 0;
+  permLubrificante     = (s.perms & ((uint32_t)1 << 0)) != 0;
+  permDiscoDiamante    = (s.perms & ((uint32_t)1 << 1)) != 0;
+  permMotorBrushless   = (s.perms & ((uint32_t)1 << 2)) != 0;
+  permEmpunhadura      = (s.perms & ((uint32_t)1 << 3)) != 0;
+  permBateriaLitio     = (s.perms & ((uint32_t)1 << 4)) != 0;
+  permIaMaker          = (s.perms & ((uint32_t)1 << 5)) != 0;
+  permRefrigeracao     = (s.perms & ((uint32_t)1 << 6)) != 0;
+  permTitanio          = (s.perms & ((uint32_t)1 << 7)) != 0;
+  permOverclock        = (s.perms & ((uint32_t)1 << 8)) != 0;
+  permNanobots         = (s.perms & ((uint32_t)1 << 9)) != 0;
+  permSingularidade    = (s.perms & ((uint32_t)1 << 10)) != 0;
+  permPlasmaCutter     = (s.perms & ((uint32_t)1 << 11)) != 0;
+  permFusaoFria        = (s.perms & ((uint32_t)1 << 12)) != 0;
+  permHiperconducao    = (s.perms & ((uint32_t)1 << 13)) != 0;
+  permSinergiaQuantica = (s.perms & ((uint32_t)1 << 14)) != 0;
+  permLaserGama        = (s.perms & ((uint32_t)1 << 15)) != 0;
+  permTaquions         = (s.perms & ((uint32_t)1 << 16)) != 0;
+  permMateriaEscura    = (s.perms & ((uint32_t)1 << 17)) != 0;
+  permHiperClique      = (s.perms & ((uint32_t)1 << 18)) != 0;
+  permOnipotenciaMaker = (s.perms & ((uint32_t)1 << 19)) != 0;
   return true;
 }
 
@@ -547,54 +614,87 @@ void loadGameState() {
   if (LittleFS.exists("/gamestate.json")) {
     File f = LittleFS.open("/gamestate.json", "r");
     if (f) {
-      StaticJsonDocument<1024> doc;
+      DynamicJsonDocument doc(3072);
       DeserializationError err = deserializeJson(doc, f);
       f.close();
 
-      if (!err) {
-        makitas = doc["makitas"] | 0.0;
+      if (!err && doc.containsKey("makitas")) {
+        makitas = doc["makitas"].as<double>();
         
         JsonObject ownedObj = doc["owned"];
         if (!ownedObj.isNull()) {
           for (int i = 0; i < NUM_UPGRADES; i++) {
             ownedUpgrades[i] = ownedObj[UPGRADE_CONFIGS[i].id] | 0;
           }
-        } else {
-          // Compatibilidade retroativa com chave antiga
-          ownedUpgrades[0] = doc["ownedUpgrade1"] | 0;
         }
 
-        permLubrificante   = doc["permLubrificante"] | false;
-        permDiscoDiamante  = doc["permDiscoDiamante"] | false;
-        permMotorBrushless = doc["permMotorBrushless"] | false;
-        permEmpunhadura    = doc["permEmpunhadura"] | false;
-        permBateriaLitio   = doc["permBateriaLitio"] | false;
-        permIaMaker        = doc["permIaMaker"] | false;
-        permRefrigeracao   = doc["permRefrigeracao"] | false;
-        permTitanio        = doc["permTitanio"] | false;
-        permOverclock      = doc["permOverclock"] | false;
-        permNanobots       = doc["permNanobots"] | false;
-        permSingularidade  = doc["permSingularidade"] | false;
+        permLubrificante     = doc["permLubrificante"] | false;
+        permDiscoDiamante    = doc["permDiscoDiamante"] | false;
+        permMotorBrushless   = doc["permMotorBrushless"] | false;
+        permEmpunhadura      = doc["permEmpunhadura"] | false;
+        permBateriaLitio     = doc["permBateriaLitio"] | false;
+        permIaMaker          = doc["permIaMaker"] | false;
+        permRefrigeracao     = doc["permRefrigeracao"] | false;
+        permTitanio          = doc["permTitanio"] | false;
+        permOverclock        = doc["permOverclock"] | false;
+        permNanobots         = doc["permNanobots"] | false;
+        permSingularidade    = doc["permSingularidade"] | false;
+        permPlasmaCutter     = doc["permPlasmaCutter"] | false;
+        permFusaoFria        = doc["permFusaoFria"] | false;
+        permHiperconducao    = doc["permHiperconducao"] | false;
+        permSinergiaQuantica = doc["permSinergiaQuantica"] | false;
+        permLaserGama        = doc["permLaserGama"] | false;
+        permTaquions         = doc["permTaquions"] | false;
+        permMateriaEscura    = doc["permMateriaEscura"] | false;
+        permHiperClique      = doc["permHiperClique"] | false;
+        permOnipotenciaMaker = doc["permOnipotenciaMaker"] | false;
         loadedFromFS = true;
-        Serial.printf("[STATE] Carregado do LittleFS: Makitas=%.1f\n", makitas);
+        Serial.printf("[STATE] Carregado do LittleFS com sucesso: Makitas=%.1f\n", makitas);
       }
     }
   }
 
-  if (!loadedFromFS) {
-    if (loadEEPROM()) {
-      Serial.printf("[STATE] Carregado do backup EEPROM: Makitas=%.1f\n", makitas);
-      saveGameState(); // Restaura imediatamente para o LittleFS
-    } else {
-      Serial.println("[STATE] Nenhum estado anterior encontrado (inicio zerado).");
+  // Verifica backup seguro na EEPROM: se LittleFS falhou OU se EEPROM tem saldo maior (ex: pós-atualização OTA do FS)
+  EEPROMState s;
+  EEPROM.get(0, s);
+  if (s.magic == EEPROM_MAGIC && calcChecksum(s) == s.checksum) {
+    if (!loadedFromFS || s.makitas > makitas) {
+      Serial.printf("[STATE] Restaurando do backup seguro EEPROM: Makitas=%.1f\n", s.makitas);
+      makitas = s.makitas;
+      for (int i = 0; i < NUM_UPGRADES; i++) {
+        ownedUpgrades[i] = s.owned[i];
+      }
+      permLubrificante     = (s.perms & ((uint32_t)1 << 0)) != 0;
+      permDiscoDiamante    = (s.perms & ((uint32_t)1 << 1)) != 0;
+      permMotorBrushless   = (s.perms & ((uint32_t)1 << 2)) != 0;
+      permEmpunhadura      = (s.perms & ((uint32_t)1 << 3)) != 0;
+      permBateriaLitio     = (s.perms & ((uint32_t)1 << 4)) != 0;
+      permIaMaker          = (s.perms & ((uint32_t)1 << 5)) != 0;
+      permRefrigeracao     = (s.perms & ((uint32_t)1 << 6)) != 0;
+      permTitanio          = (s.perms & ((uint32_t)1 << 7)) != 0;
+      permOverclock        = (s.perms & ((uint32_t)1 << 8)) != 0;
+      permNanobots         = (s.perms & ((uint32_t)1 << 9)) != 0;
+      permSingularidade    = (s.perms & ((uint32_t)1 << 10)) != 0;
+      permPlasmaCutter     = (s.perms & ((uint32_t)1 << 11)) != 0;
+      permFusaoFria        = (s.perms & ((uint32_t)1 << 12)) != 0;
+      permHiperconducao    = (s.perms & ((uint32_t)1 << 13)) != 0;
+      permSinergiaQuantica = (s.perms & ((uint32_t)1 << 14)) != 0;
+      permLaserGama        = (s.perms & ((uint32_t)1 << 15)) != 0;
+      permTaquions         = (s.perms & ((uint32_t)1 << 16)) != 0;
+      permMateriaEscura    = (s.perms & ((uint32_t)1 << 17)) != 0;
+      permHiperClique      = (s.perms & ((uint32_t)1 << 18)) != 0;
+      permOnipotenciaMaker = (s.perms & ((uint32_t)1 << 19)) != 0;
+      saveGameState(); // Sincroniza imediatamente com o LittleFS
     }
+  } else if (!loadedFromFS) {
+    Serial.println("[STATE] Nenhum estado anterior encontrado (inicio zerado).");
   }
 }
 
 void saveGameState() {
   File f = LittleFS.open("/gamestate.json", "w");
   if (f) {
-    StaticJsonDocument<1024> doc;
+    DynamicJsonDocument doc(3072);
     doc["makitas"] = makitas;
     
     JsonObject ownedObj = doc.createNestedObject("owned");
@@ -602,17 +702,26 @@ void saveGameState() {
       ownedObj[UPGRADE_CONFIGS[i].id] = ownedUpgrades[i];
     }
 
-    doc["permLubrificante"]   = permLubrificante;
-    doc["permDiscoDiamante"]  = permDiscoDiamante;
-    doc["permMotorBrushless"] = permMotorBrushless;
-    doc["permEmpunhadura"]    = permEmpunhadura;
-    doc["permBateriaLitio"]   = permBateriaLitio;
-    doc["permIaMaker"]        = permIaMaker;
-    doc["permRefrigeracao"]   = permRefrigeracao;
-    doc["permTitanio"]        = permTitanio;
-    doc["permOverclock"]      = permOverclock;
-    doc["permNanobots"]       = permNanobots;
-    doc["permSingularidade"]  = permSingularidade;
+    doc["permLubrificante"]     = permLubrificante;
+    doc["permDiscoDiamante"]    = permDiscoDiamante;
+    doc["permMotorBrushless"]   = permMotorBrushless;
+    doc["permEmpunhadura"]      = permEmpunhadura;
+    doc["permBateriaLitio"]     = permBateriaLitio;
+    doc["permIaMaker"]          = permIaMaker;
+    doc["permRefrigeracao"]     = permRefrigeracao;
+    doc["permTitanio"]          = permTitanio;
+    doc["permOverclock"]        = permOverclock;
+    doc["permNanobots"]         = permNanobots;
+    doc["permSingularidade"]    = permSingularidade;
+    doc["permPlasmaCutter"]     = permPlasmaCutter;
+    doc["permFusaoFria"]        = permFusaoFria;
+    doc["permHiperconducao"]    = permHiperconducao;
+    doc["permSinergiaQuantica"] = permSinergiaQuantica;
+    doc["permLaserGama"]        = permLaserGama;
+    doc["permTaquions"]         = permTaquions;
+    doc["permMateriaEscura"]    = permMateriaEscura;
+    doc["permHiperClique"]      = permHiperClique;
+    doc["permOnipotenciaMaker"] = permOnipotenciaMaker;
 
     serializeJson(doc, f);
     f.flush();
@@ -638,16 +747,39 @@ void resetGameState() {
   permOverclock = false;
   permNanobots = false;
   permSingularidade = false;
+  permPlasmaCutter = false;
+  permFusaoFria = false;
+  permHiperconducao = false;
+  permSinergiaQuantica = false;
+  permLaserGama = false;
+  permTaquions = false;
+  permMateriaEscura = false;
+  permHiperClique = false;
+  permOnipotenciaMaker = false;
   
   if (LittleFS.exists("/gamestate.json")) {
     LittleFS.remove("/gamestate.json");
   }
+  
+  // Limpa EEPROM
+  EEPROMState s;
+  memset(&s, 0, sizeof(EEPROMState));
+  s.magic = EEPROM_MAGIC;
+  s.makitas = 0.0;
+  s.checksum = calcChecksum(s);
+  EEPROM.put(0, s);
+  EEPROM.commit();
+
   saveGameState();
-  broadcastState();
+  
+  // Transmite JSON especial informando o reset explicito
+  String resetJson = "{\"isReset\":true,\"makitas\":0.0,\"mps\":0.0,\"clickPower\":1.0,\"owned\":{},\"perms\":{}}";
+  webSocket.broadcastTXT(resetJson);
+  notifyMega();
   Serial.println("[STATE] Progresso resetado com sucesso.");
 }
 
-void processPermBuy(String permId, int cost) {
+void processPermBuy(String permId, double cost) {
   if (makitas < cost) return;
 
   bool bought = false;
@@ -667,12 +799,30 @@ void processPermBuy(String permId, int cost) {
     permRefrigeracao = true; bought = true;
   } else if (permId == "perm_titanio" && !permTitanio && permDiscoDiamante) {
     permTitanio = true; bought = true;
-  } else if (permId == "perm_overclock" && !permOverclock && permEmpunhadura && permRefrigeracao) {
+  } else if (permId == "perm_overclock" && !permOverclock && permEmpunhadura) {
     permOverclock = true; bought = true;
   } else if (permId == "perm_nanobots" && !permNanobots && permIaMaker) {
     permNanobots = true; bought = true;
-  } else if (permId == "perm_singularidade" && !permSingularidade && permNanobots && permOverclock) {
+  } else if (permId == "perm_singularidade" && !permSingularidade && permNanobots) {
     permSingularidade = true; bought = true;
+  } else if (permId == "perm_plasma_cutter" && !permPlasmaCutter && permTitanio) {
+    permPlasmaCutter = true; bought = true;
+  } else if (permId == "perm_fusao_fria" && !permFusaoFria && permSingularidade) {
+    permFusaoFria = true; bought = true;
+  } else if (permId == "perm_hiperconducao" && !permHiperconducao && permFusaoFria) {
+    permHiperconducao = true; bought = true;
+  } else if (permId == "perm_sinergia_quantica" && !permSinergiaQuantica && permOverclock) {
+    permSinergiaQuantica = true; bought = true;
+  } else if (permId == "perm_laser_gama" && !permLaserGama && permPlasmaCutter) {
+    permLaserGama = true; bought = true;
+  } else if (permId == "perm_taquions" && !permTaquions && permHiperconducao) {
+    permTaquions = true; bought = true;
+  } else if (permId == "perm_materia_escura" && !permMateriaEscura && permTaquions) {
+    permMateriaEscura = true; bought = true;
+  } else if (permId == "perm_hiper_clique" && !permHiperClique && permLaserGama) {
+    permHiperClique = true; bought = true;
+  } else if (permId == "perm_onipotencia_maker" && !permOnipotenciaMaker && permMateriaEscura) {
+    permOnipotenciaMaker = true; bought = true;
   }
 
   if (bought) {
@@ -710,7 +860,7 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
       int firstSep = msg.indexOf(':', 9);
       if (firstSep != -1) {
         String permId = msg.substring(9, firstSep);
-        int cost = msg.substring(firstSep + 1).toInt();
+        double cost = msg.substring(firstSep + 1).toDouble();
         processPermBuy(permId, cost);
       }
     }
@@ -791,7 +941,7 @@ void setup() {
   // Inicializa o pino de reset do Mega em modo Open-Drain (alta impedancia)
   pinMode(MEGA_RESET_PIN, INPUT);
 
-  EEPROM.begin(64);
+  EEPROM.begin(128);
 
   if (!LittleFS.begin()) {
     Serial.println("[FS] Erro ao montar LittleFS");
