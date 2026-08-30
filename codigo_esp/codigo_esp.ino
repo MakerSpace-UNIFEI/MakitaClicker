@@ -200,7 +200,6 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
   pinMode(MEGA_RESET_PIN, INPUT); // Alta impedância segura
   delay(100);
 
-  megaSerial.setRxBufferSize(512);
   megaSerial.begin(115200);
   while (megaSerial.available()) megaSerial.read();
   delay(100);
@@ -938,7 +937,6 @@ void checkOTA() {
 void setup() {
   system_update_cpu_freq(160); // 160MHz para máxima precisão de baud rate na SoftwareSerial
   Serial.begin(115200);
-  megaSerial.setRxBufferSize(512);
   megaSerial.begin(115200);
 
   // Inicializa o pino de reset do Mega em modo Open-Drain (alta impedancia)
