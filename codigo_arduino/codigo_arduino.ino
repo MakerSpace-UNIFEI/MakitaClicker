@@ -218,11 +218,70 @@ void atualizarLCD() {
   }
 }
 
+// Buffer Serial Não-Bloqueante (Zero timeout, imune a travamentos)
+char serialRxBuf[96];
+uint8_t serialRxIdx = 0;
+
+void processPacket(char *line) {
+  if (strncmp(line, "MAKITA:", 7) != 0) return;
+  char *p = line + 7;
+  
+  // Decodifica formato: MAKITA:<saldo>,<mps>,<clickPower>,<totalOwned>
+  char *sep1 = strchr(p, ',');
+  if (!sep1) return;
+  *sep1 = '\0';
+  makitasGlobal = atof(p);
+  
+  char *p2 = sep1 + 1;
+  char *sep2 = strchr(p2, ',');
+  if (!sep2) {
+    mpsGlobal = atof(p2);
+    atualizarLCD();
+    return;
+  }
+  *sep2 = '\0';
+  mpsGlobal = atof(p2);
+  
+  char *p3 = sep2 + 1;
+  char *sep3 = strchr(p3, ',');
+  if (!sep3) {
+    clickPowerGlobal = atof(p3);
+    atualizarLCD();
+    return;
+  }
+  *sep3 = '\0';
+  clickPowerGlobal = atof(p3);
+  
+  char *p4 = sep3 + 1;
+  totalOwnedGlobal = atoi(p4);
+  
+  atualizarLCD();
+}
+
+void processarSerialRecebida() {
+  while (Serial.available() > 0) {
+    char c = (char)Serial.read();
+    if (c == '\n' || c == '\r') {
+      if (serialRxIdx > 0) {
+        serialRxBuf[serialRxIdx] = '\0';
+        processPacket(serialRxBuf);
+        serialRxIdx = 0;
+      }
+    } else if (serialRxIdx < sizeof(serialRxBuf) - 1) {
+      serialRxBuf[serialRxIdx++] = c;
+    } else {
+      // Buffer excedido: descarta para recuperar sincronia imediatamente
+      serialRxIdx = 0;
+    }
+  }
+}
+
 void setup() {
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 
   // Comunicação Serial0 com ESP8266 a 115200 baud
   Serial.begin(115200);
+  Serial.setTimeout(20);
 
   Wire.begin();
   lcd.init();
@@ -266,38 +325,8 @@ void loop() {
     }
   }
 
-  // 2. Leitura dos pacotes de telemetria recebidos do ESP8266
-  if (Serial.available()) {
-    String buffer = Serial.readStringUntil('\n');
-    buffer.trim();
-
-    if (buffer.startsWith("MAKITA:")) {
-      String dados = buffer.substring(7);
-      
-      // Decodifica formato: MAKITA:<saldo>,<mps>,<clickPower>,<totalOwned>
-      int sep1 = dados.indexOf(',');
-      if (sep1 != -1) {
-        makitasGlobal = dados.substring(0, sep1).toFloat();
-        
-        int sep2 = dados.indexOf(',', sep1 + 1);
-        if (sep2 != -1) {
-          mpsGlobal = dados.substring(sep1 + 1, sep2).toFloat();
-          
-          int sep3 = dados.indexOf(',', sep2 + 1);
-          if (sep3 != -1) {
-            clickPowerGlobal = dados.substring(sep2 + 1, sep3).toFloat();
-            totalOwnedGlobal = dados.substring(sep3 + 1).toInt();
-          } else {
-            clickPowerGlobal = dados.substring(sep2 + 1).toFloat();
-          }
-        } else {
-          mpsGlobal = dados.substring(sep1 + 1).toFloat();
-        }
-        
-        atualizarLCD();
-      }
-    }
-  }
+  // 2. Processa pacotes seriais do ESP8266 de forma 100% não-bloqueante
+  processarSerialRecebida();
 
   // 3. Animação de rotação do disco e rotação de informações na linha 3
   if (now - ultimoTickAnimacao >= 400) {

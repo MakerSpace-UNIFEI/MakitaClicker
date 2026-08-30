@@ -476,6 +476,7 @@ void notifyMega() {
   }
   String payload = "MAKITA:" + String(makitas, 1) + "," + String(getTotalMps(), 1) + "," + String(getClickPower(), 1) + "," + String(totalOwned);
   megaSerial.println(payload);
+  megaSerial.flush();
 }
 
 void broadcastState() {
