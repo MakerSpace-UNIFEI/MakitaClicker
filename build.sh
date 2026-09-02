@@ -16,29 +16,30 @@ fi
 
 echo "=== Versão deste build: $VERSION ==="
 
-# Patcha os #define no .ino ANTES de compilar
+# Patcha a versão do firmware no .ino ANTES de compilar
 sed -i "s/#define CURRENT_FIRMWARE_VER .*/#define CURRENT_FIRMWARE_VER $VERSION/" codigo_esp/codigo_esp.ino
-sed -i "s/#define CURRENT_FS_VER .*/#define CURRENT_FS_VER       $VERSION/" codigo_esp/codigo_esp.ino
 
 echo "[VERSION] codigo_esp.ino patchado:"
-grep "CURRENT_.*_VER" codigo_esp/codigo_esp.ino
+grep "CURRENT_FIRMWARE_VER" codigo_esp/codigo_esp.ino
 
-echo "=== [1/4] Instalando arduino-cli ==="
+echo "=== [1/3] Instalando arduino-cli ==="
 curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | BINDIR=. sh
 export PATH=$PATH:.
 
-echo "=== [2/4] Configurando Core ESP8266 ==="
+echo "=== [2/3] Configurando Core ESP8266 ==="
 arduino-cli config init --additional-urls https://arduino.esp8266.com/stable/package_esp8266com_index.json
 arduino-cli core update-index
 arduino-cli core install esp8266:esp8266
 
-echo "=== [3/4] Instalando Bibliotecas ESP ==="
-arduino-cli lib install "WebSockets"
+echo "=== [3/3] Instalando Bibliotecas ESP ==="
 arduino-cli lib install "ArduinoJson"
 
 mkdir -p online
 
-echo "=== [4/4] Compilando Firmware ESP8266 ==="
+echo "=== Copiando Assets Web para Hospedagem no Cloudflare Pages ==="
+cp -r web/* online/
+
+echo "=== Compilando Firmware ESP8266 ==="
 SKETCH_DIR="codigo_esp"
 mkdir -p build_esp
 arduino-cli compile --fqbn esp8266:esp8266:nodemcuv2 \
@@ -47,24 +48,11 @@ arduino-cli compile --fqbn esp8266:esp8266:nodemcuv2 \
 
 mv ./build_esp/*.bin ./online/firmware.bin || true
 
-echo "=== Gerando Imagem do LittleFS ==="
-MKLITTLEFS_BIN=$(find /opt/buildhome/.arduino15 /root/.arduino15 "$HOME/.arduino15" \
-  -name mklittlefs -type f 2>/dev/null | head -n 1)
-
-if [ -n "$MKLITTLEFS_BIN" ]; then
-  "$MKLITTLEFS_BIN" -c "$SKETCH_DIR/data" -p 256 -b 8192 -s 2072576 ./online/littlefs.bin
-else
-  echo "[ERRO] mklittlefs nao encontrado!"
-  exit 1
-fi
-
-# Gera o version.json com a mesma versão gravada nos firmwares
+# Gera o version.json com a mesma versão gravada no firmware
 cat > ./online/version.json << VERSIONJSON
 {
   "firmware_version": $VERSION,
-  "fs_version": $VERSION,
-  "firmware_url": "https://makitaclicker.pages.dev/firmware.bin",
-  "fs_url": "https://makitaclicker.pages.dev/littlefs.bin"
+  "firmware_url": "https://makitaclicker.pages.dev/firmware.bin"
 }
 VERSIONJSON
 

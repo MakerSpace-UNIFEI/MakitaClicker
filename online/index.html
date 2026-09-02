@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Makita clicker · ESP8266</title>
+    <title>Makita Clicker · MakerSpace UNIFEI</title>
     <style>
         :root {
             --bg-void: #0a0a0a;
@@ -653,7 +653,7 @@
             <button class="navbtn is-active" id="tabBtnPerm" data-tab="tab-perm">Melhorias Permanentes</button>
             <button class="navbtn" id="tabBtnStats" data-tab="tab-stats">Estatísticas</button>
         </div>
-        <div class="center-log" id="log">Conectando ao servidor do ESP32...</div>
+        <div class="center-log" id="log">Conectando à Nuvem (Cloudflare Pages & KV)...</div>
         <div class="center-body stripes">
             <!-- Aba 1: Melhorias Permanentes (Skill Tree) -->
             <div class="tab-pane is-active" id="tab-perm">
@@ -731,10 +731,10 @@
 
 <script>
     // =====================================================================
-    // MOTOR DE JOGO NO CLIENTE (60 FPS) + SINCRONIZAÇÃO AUTORITATIVA COM ESP
+    // MOTOR DE JOGO NO CLIENTE (60 FPS) + SINCRONIZAÇÃO COM CLOUDFLARE PAGES & KV
     // =====================================================================
     let isLocalMode = false;
-    let socket = null;
+    let pendingClicks = 0;
     let serverClickPower = 1.0;
 
     // ---------- estado ----------
@@ -1209,7 +1209,7 @@
         });
     }
 
-    // ---------- COMPRAS OTIMISTAS NO CLIENTE + ENVIO AO ESP ----------
+    // ---------- COMPRAS NO CLIENTE + ENVIO À NUVEM (PAGES & KV) ----------
     function buyUpgrade(upgrade) {
         const { qty, cost } = computeBuy(upgrade);
         if (qty <= 0 || makitas < cost) return;
@@ -1219,9 +1219,7 @@
         owned[upgrade.id] = (owned[upgrade.id] || 0) + qty;
         mps = calculateLocalMps();
 
-        if (socket && socket.readyState === WebSocket.OPEN) {
-            socket.send(`BUY:${upgrade.id}:${buyQty}`);
-        }
+        syncWithCloud({ action: 'buy', upgradeId: upgrade.id, qty: buyQty });
         saveLocalState();
         render();
     }
@@ -1240,9 +1238,7 @@
         mps = calculateLocalMps();
         serverClickPower = calculateLocalClickPower();
 
-        if (socket && socket.readyState === WebSocket.OPEN) {
-            socket.send(`PERM_BUY:${perm.id}:${perm.cost}`);
-        }
+        syncWithCloud({ action: 'perm_buy', permId: perm.id });
 
         savePermanentProgress();
         saveLocalState();
@@ -1510,22 +1506,15 @@
         // Incremento imediato no cliente
         makitas += gain;
         totalMakitasMade += gain;
+        pendingClicks++;
         playClickFeedback(gain);
-
-        if (socket && socket.readyState === WebSocket.OPEN) {
-            socket.send('CLICK');
-        }
     });
 
-    // ---------- COMUNICAÇÃO WEBSOCKET E RECONCILIAÇÃO COM O ESP ----------
-    function handleSocketMessage(event) {
-        let data;
-        try {
-            data = JSON.parse(event.data);
-        } catch (err) {
-            console.error('Mensagem inválida do ESP:', event.data, err);
-            return;
-        }
+    // ---------- COMUNICAÇÃO HTTP COM CLOUDFLARE PAGES & KV ----------
+    let isSyncing = false;
+
+    function applyServerState(data) {
+        if (!data) return;
 
         // Se o servidor transmitiu um comando explícito de reset:
         if (data.isReset === true) {
@@ -1537,6 +1526,7 @@
             mps = 0;
             totalMakitasMade = 0;
             prevMakitas = 0;
+            pendingClicks = 0;
             upgrades.forEach(u => { owned[u.id] = 0; });
             permanentUpgrades.forEach(u => { u.purchased = false; });
             render();
@@ -1544,10 +1534,14 @@
         }
 
         if (typeof data.makitas === 'number') {
-            // Reconciliação suave: mantém o maior valor para nunca perder cliques rápidos
-            if (data.makitas > makitas) {
-                totalMakitasMade += (data.makitas - makitas);
-                makitas = data.makitas;
+            // Reconciliação suave considerando cliques pendentes locais ainda não confirmados
+            const localPendingGain = pendingClicks * calculateLocalClickPower();
+            if (data.makitas + localPendingGain > makitas) {
+                totalMakitasMade += ((data.makitas + localPendingGain) - makitas);
+                makitas = data.makitas + localPendingGain;
+            } else if (Math.abs(data.makitas - makitas) > 200) {
+                // Alinha se houver divergência relevante
+                makitas = data.makitas + localPendingGain;
             }
         }
         
@@ -1567,8 +1561,8 @@
             });
         }
 
-        // Atualiza mps e poder de clique oficiais (aceita valor do servidor se disponível)
-        if (typeof data.mps === 'number' && data.mps > 0) {
+        // Atualiza mps e poder de clique oficiais do servidor
+        if (typeof data.mps === 'number' && data.mps >= 0) {
             mps = data.mps;
         } else {
             mps = calculateLocalMps();
@@ -1577,38 +1571,81 @@
 
         savePermanentProgress();
         saveLocalState();
+        render();
     }
 
-    function tryConnectWebSocket() {
+    async function syncWithCloud(actionPayload = null) {
         if (!window.location.hostname || window.location.protocol === 'file:') {
             logEl.textContent = '🛠️ Modo de Teste Local Ativo (Simulador Offline 60 FPS)';
             logEl.style.color = 'var(--orange)';
             return;
         }
 
+        if (isSyncing && !actionPayload) return;
+        isSyncing = true;
+
+        let body = null;
+        let clicksSent = 0;
+
+        if (actionPayload) {
+            body = { ...actionPayload };
+            if (pendingClicks > 0 && actionPayload.action !== 'reset') {
+                body.clicks = (body.clicks || 0) + pendingClicks;
+                clicksSent = pendingClicks;
+                pendingClicks = 0;
+            }
+        } else if (pendingClicks > 0) {
+            clicksSent = pendingClicks;
+            body = { action: 'sync', clicks: clicksSent };
+            pendingClicks = 0;
+        }
+
         try {
-            socket = new WebSocket('ws://' + window.location.hostname + ':81/');
-            
-            socket.onopen = () => {
-                logEl.textContent = '⚡ Conectado à Oficina Global (ESP8266)! Renderização 60 FPS Ativa.';
-                logEl.style.color = 'var(--text-lo)';
+            const method = body ? 'POST' : 'GET';
+            const opts = {
+                method,
+                headers: { 'Content-Type': 'application/json' }
             };
+            if (body) opts.body = JSON.stringify(body);
 
-            socket.onclose = () => {
-                logEl.textContent = '⚠️ Desconectado do ESP. Simulando localmente a 60 FPS.';
-                logEl.style.color = 'var(--orange)';
-            };
+            const res = await fetch('/api/state', opts);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-            socket.onerror = () => {
-                logEl.textContent = '⚠️ Conexão offline. Operando em modo autônomo local.';
-                logEl.style.color = 'var(--orange)';
-            };
+            const data = await res.json();
+            applyServerState(data);
 
-            socket.onmessage = handleSocketMessage;
-        } catch(e) {
-            logEl.textContent = '⚠️ Operando em modo autônomo local.';
+            logEl.textContent = '🟢 Conectado ao Cloudflare Pages & KV (Sync Ativo)';
+            logEl.style.color = 'var(--text-lo)';
+        } catch (err) {
+            // Em caso de falha, recupera os cliques para tentar novamente
+            pendingClicks += clicksSent;
+            logEl.textContent = '⚠️ Modo autônomo local (aguardando conexão com a nuvem)';
+            logEl.style.color = 'var(--orange)';
+        } finally {
+            isSyncing = false;
         }
     }
+
+    // Sincronização periódica a cada 3 segundos em segundo plano
+    setInterval(() => {
+        syncWithCloud();
+    }, 3000);
+
+    // Envio seguro ao trocar de aba ou fechar o navegador
+    window.addEventListener('beforeunload', () => {
+        if (pendingClicks > 0) {
+            const payload = JSON.stringify({ action: 'sync', clicks: pendingClicks });
+            if (navigator.sendBeacon) {
+                navigator.sendBeacon('/api/state', new Blob([payload], { type: 'application/json' }));
+            }
+        }
+    });
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden' && pendingClicks > 0) {
+            syncWithCloud();
+        }
+    });
 
     // ---------- BOTÃO DE RESET TOTAL ----------
     const resetGameBtn = document.getElementById('resetGameBtn');
@@ -1623,12 +1660,11 @@
                 mps = 0;
                 totalMakitasMade = 0;
                 prevMakitas = 0;
+                pendingClicks = 0;
                 upgrades.forEach(u => { owned[u.id] = 0; });
                 permanentUpgrades.forEach(u => { u.purchased = false; });
 
-                if (socket && socket.readyState === WebSocket.OPEN) {
-                    socket.send('RESET');
-                }
+                syncWithCloud({ action: 'reset' });
 
                 serverClickPower = 1.0;
                 render();
@@ -1661,7 +1697,7 @@
 
     buildShopList();
     buildPermTree();
-    tryConnectWebSocket();
+    syncWithCloud();
     render();
 
     // Inicia o motor gráfico suave a 60 FPS

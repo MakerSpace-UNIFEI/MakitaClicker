@@ -26,22 +26,26 @@ MakitaClicker é um jogo estilo *cookie clicker* físico-digital, onde o jogador
 O jogo tem dois modos de interação simultâneos e integrados:
 
 **1. Botão Físico**
-O jogador pressiona um botão conectado ao Arduino Mega (pino 7). O Mega envia o comando `CLICK` ao ESP8266 via Serial0 (38400 baud estável). O ESP soma as Makitas calculando os multiplicadores da árvore de habilidades e transmite o novo estado para todos os clientes web via WebSocket.
+O jogador pressiona o botão conectado ao Arduino Mega (pinos 6 ou 7). O Mega envia o comando `CLICK` ao ESP8266 via Serial0 (38400 baud estável). O ESP soma as Makitas instantaneamente no display LCD e acumula os cliques para sincronização em lote com a nuvem (Cloudflare KV).
 
-**2. Interface Web**
-Qualquer dispositivo na mesma rede Wi-Fi acessa `http://esp-painel.local` (ou pelo IP). A página HTML — servida diretamente da memória flash do ESP (LittleFS) — se comunica com o ESP via WebSocket na porta 81 em tempo real.
+**2. Interface Web (Cloudflare Pages)**
+Qualquer dispositivo acessa globalmente `https://makitaclicker.pages.dev`. O site é servido diretamente pela CDN da Cloudflare e sincroniza com a API Serverless (`/api/state`) conectada ao Cloudflare KV.
 
-**Produção passiva:** upgrades e melhorias permanentes geram Makitas automaticamente a cada 100ms e salvam o progresso em `/gamestate.json`.
+**Produção passiva:** upgrades e melhorias permanentes geram Makitas automaticamente de forma contínua no Cloudflare KV e são sincronizados com o ESP8266 a cada 30 segundos.
 
 **LCD:** O Mega exibe o saldo e a taxa de produção em tempo real num display LCD I2C 20×4 (com auto-detecção de endereço 0x27 / 0x3F), recebendo atualizações do ESP via Serial.
 
 ```
-[ Botão Físico ] ──Serial──▶ [ Arduino Mega 2560 ] ──Serial0 (38400 / 115200 OTA)──▶ [ ESP8266 ]
-                              [ LCD 20x4 I2C ]                                      │       │
-                              [ Display ]    ◀───────────Serial─────────────────────┘       │
-                                                                                            │ Wi-Fi
-                                                                                    [ Clientes Web ]
-                                                                                    [ WebSocket :81 ]
+[ Botão Físico ] ──Serial──▶ [ Arduino Mega 2560 ] ◄──Serial0 (38400)──► [ ESP8266 ]
+                              [ LCD 20x4 I2C ]                              │
+                              [ Display ] ◀─────────────────────────────────┘
+                                                                            │ HTTPS Outbound (Sync 30s)
+                                                                            ▼
+                                                                [ Cloudflare Pages & KV ]
+                                                                [ makitaclicker.pages.dev ]
+                                                                            ▲
+                                                                            │ HTTPS REST (Sync 3s)
+                                                                [ Clientes Web / Celular ]
 ```
 
 ---
@@ -83,17 +87,15 @@ Ao ligar, o ESP executa em sequência:
 
 ```
 1. Inicia CPU em 160MHz, Serial USB (115200) e megaSerial (38400)
-2. Inicializa EEPROM (128 bytes) e monta a partição LittleFS
-3. Conecta à rede Wi-Fi "MakerSpace UNIFEI"
-4. Executa checkOTA():
-   a. Verifica versão do Mega -> grava se houver novidade (STK500v2)
-   b. Verifica versão do LittleFS -> grava se houver novidade
-   c. Verifica versão do ESP -> grava e reinicia se houver novidade
-5. Executa resetMega() -> sincroniza o boot e LCD do Arduino Mega
-6. Registra rotas HTTP (/, imagens)
-7. Inicia WebServer (porta 80) e WebSocketServer (porta 81)
-8. Carrega o estado salvo (/gamestate.json com espelhamento EEPROM)
-9. Entra no loop principal (24 oficinas, 20 tecnologias, produção passiva a cada 100ms)
+2. Conecta à rede Wi-Fi "MakerSpace UNIFEI"
+3. Executa checkOTA(): verifica firmware_version e regrava firmware via nuvem se houver novidade
+4. Executa resetMega() -> sincroniza o boot e LCD do Arduino Mega
+5. Envia "IP:pages.dev" para exibição no display LCD
+6. Executa syncWithCloud() -> puxa o estado atual do Cloudflare KV via HTTPS (/api/state)
+7. Entra no loop principal:
+   - Recebe cliques do botão físico via Serial do Mega (resposta instantânea em 0ms)
+   - Atualiza o LCD a cada 250ms com telemetria (saldo, MPS, status)
+   - Sincroniza periodicamente com o Cloudflare KV a cada 30 segundos enviando cliques em lote
 ```
 
 ---
@@ -102,23 +104,22 @@ Ao ligar, o ESP executa em sequência:
 
 O repositório está integrado ao **Cloudflare Pages**. A cada `git push`, o Cloudflare executa o script [`build.sh`](file:///home/vaugusto/Desktop/MakitaClicker/build.sh) automaticamente num container Linux:
 
-### O que o `build.sh` executa (em 6 etapas)
+### O que o `build.sh` executa:
 
 ```
-[1/6] Instala arduino-cli (binário independente)
-[2/6] Configura e instala os cores: esp8266:esp8266 e arduino:avr
-[3/6] Instala bibliotecas: WebSockets, ArduinoJson, LiquidCrystal I2C
-[4/6] Compila o sketch do ESP8266 -> gera online/firmware.bin
-[5/6] Compila o sketch do Arduino Mega e converte para binário -> gera online/mega.bin
-[6/6] Empacota a pasta data/ com mklittlefs -> gera online/littlefs.bin
+[1/3] Instala arduino-cli (binário independente)
+[2/3] Configura e instala o core esp8266:esp8266
+[3/3] Instala biblioteca: ArduinoJson
+[*]   Copia os assets da interface web (web/) para a pasta de publicação (online/)
+[*]   Compila o sketch do ESP8266 -> gera online/firmware.bin
 [*]   Gera o manifesto online/version.json sincronizado com a contagem de commits git
 ```
 
 Todos os artefatos são publicados diretamente na CDN global da Cloudflare:
-- `https://makitaclicker.pages.dev/version.json`
-- `https://makitaclicker.pages.dev/firmware.bin`
-- `https://makitaclicker.pages.dev/littlefs.bin`
-- `https://makitaclicker.pages.dev/mega.bin`
+- `https://makitaclicker.pages.dev/` (Interface Web)
+- `https://makitaclicker.pages.dev/api/state` (API Serverless conectada ao Cloudflare KV)
+- `https://makitaclicker.pages.dev/version.json` (Manifesto OTA)
+- `https://makitaclicker.pages.dev/firmware.bin` (Binário do ESP8266)
 
 ---
 
@@ -128,20 +129,25 @@ Todos os artefatos são publicados diretamente na CDN global da Cloudflare:
 MakitaClicker/
 ├── build.sh                    # Script de CI/CD executado pelo Cloudflare Pages
 │
+├── web/                        # Interface Web do Jogo (hospedada no Cloudflare Pages)
+│   ├── index.html              # Painel web do jogo (motor gráfico 60 FPS + REST Sync)
+│   └── images/                 # Imagens e ícones
+│
+├── functions/                  # Cloudflare Pages Functions (API Serverless)
+│   └── api/
+│       └── state.js            # Endpoints GET e POST /api/state conectados ao Cloudflare KV
+│
 ├── codigo_esp/                 # Código do ESP8266 (NodeMCU v2)
-│   ├── codigo_esp.ino          # Firmware principal, lógica do jogo e gravador STK500v2
-│   └── data/                   # Arquivos da interface Web (LittleFS)
-│       ├── index.html          # Painel web do jogo
-│       └── images/             # Imagens e ícones
+│   └── codigo_esp.ino          # Cliente cloud leve, sync HTTPS 30s e ponte com o Mega
 │
 ├── codigo_arduino/             # Código do Arduino Mega 2560
-│   └── codigo_arduino.ino      # Controle de botão físico, LCD e comunicação Serial0
+│   └── codigo_arduino.ino      # Controle de botões físicos, LCD 20x4 e telemetria
 │
 └── online/                     # Diretório de publicação servido pela Cloudflare CDN
-    ├── version.json            # Manifesto de versão
-    ├── firmware.bin            # Binário do ESP8266
-    ├── littlefs.bin            # Imagem do sistema de arquivos
-    └── mega.bin                # Binário bruto do Arduino Mega
+    ├── index.html              # Frontend servido pela CDN
+    ├── images/                 # Assets gráficos
+    ├── version.json            # Manifesto de versão OTA
+    └── firmware.bin            # Binário do ESP8266
 ```
 
 ---

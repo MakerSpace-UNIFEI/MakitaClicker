@@ -1,15 +1,10 @@
 #include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
-#include <ESP8266mDNS.h>
-#include <LittleFS.h>
-#include <WebSocketsServer.h>
 #include <SoftwareSerial.h>
 #include <math.h>
 #include <WiFiClientSecure.h>
 #include <ESP8266HTTPClient.h>
 #include <ESP8266httpUpdate.h>
 #include <ArduinoJson.h>
-#include <EEPROM.h>
 
 const int NUM_UPGRADES = 24;
 
@@ -20,31 +15,17 @@ struct UpgradeConfig {
   double mps;
 };
 
-#define EEPROM_MAGIC 0x4D4B5433 // "MKT3"
-
-struct EEPROMState {
-  uint32_t magic;
-  double makitas;
-  uint8_t owned[NUM_UPGRADES]; // 24 upgrades (24 bytes)
-  uint32_t perms; // bitmask para até 32 perms (20 em uso)
-  uint8_t checksum;
-};
-
 // ===== VERSÃO LOCAL — gerenciado automaticamente pelo build.sh =====
 // NÃO edite manualmente. O Cloudflare Pages injeta o valor correto antes de compilar.
 #define CURRENT_FIRMWARE_VER 0
-#define CURRENT_FS_VER       0
 
 #define MEGA_RESET_PIN D5
 
 const char* VERSION_URL = "https://makitaclicker.pages.dev/version.json";
+const char* STATE_URL   = "https://makitaclicker.pages.dev/api/state";
 
 const char* ssid = "MakerSpace UNIFEI";
 const char* password = "makerspace@23";
-const char* hostName = "esp-painel";
-
-ESP8266WebServer server(80);
-WebSocketsServer webSocket = WebSocketsServer(81);
 
 #define GAME_BAUD_RATE 38400
 
@@ -65,6 +46,7 @@ void resetMega() {
 // ===== ESTADO DO JOGO =====
 double makitas = 0.0;
 const int MAX_OWNED = 100;
+int pendingPhysicalClicks = 0;
 
 const UpgradeConfig UPGRADE_CONFIGS[NUM_UPGRADES] = {
   { "upgrade1",          10.0,         1.10, 0.1 },        // +0.1 MPS
@@ -117,21 +99,6 @@ bool permMateriaEscura = false;     // (bit 17) +300% MPS global
 bool permHiperClique = false;       // (bit 18) 10x multiplicador de poder de clique
 bool permOnipotenciaMaker = false;  // (bit 19) +500% MPS global, +30% MPS/clique, 4x oficinas
 
-unsigned long lastTick = 0;
-unsigned long lastBroadcast = 0;
-
-int getUpgradeIndex(const String &id) {
-  for (int i = 0; i < NUM_UPGRADES; i++) {
-    if (id == UPGRADE_CONFIGS[i].id) return i;
-  }
-  return -1;
-}
-
-double unitCost(int index, int count) {
-  if (index < 0 || index >= NUM_UPGRADES) return 1e18;
-  return ceil(UPGRADE_CONFIGS[index].baseCost * pow((double)UPGRADE_CONFIGS[index].growth, count));
-}
-
 double getClickPower() {
   double power = 1.0;
   if (permDiscoDiamante) power += 1.0;
@@ -172,43 +139,6 @@ double getTotalMps() {
   return baseMps * multiplier;
 }
 
-// JSON compatível com o index.html
-String getGameStateJSON() {
-  String json = "{";
-  json += "\"makitas\":" + String(makitas, 1) + ",";
-  json += "\"mps\":" + String(getTotalMps(), 1) + ",";
-  json += "\"clickPower\":" + String(getClickPower(), 1) + ",";
-  json += "\"owned\":{";
-  for (int i = 0; i < NUM_UPGRADES; i++) {
-    json += "\"" + String(UPGRADE_CONFIGS[i].id) + "\":" + String(ownedUpgrades[i]);
-    if (i < NUM_UPGRADES - 1) json += ",";
-  }
-  json += "},";
-  json += "\"perms\":{";
-  json += "\"perm_lubrificante\":" + String(permLubrificante ? "true" : "false") + ",";
-  json += "\"perm_disco_diamante\":" + String(permDiscoDiamante ? "true" : "false") + ",";
-  json += "\"perm_motor_brushless\":" + String(permMotorBrushless ? "true" : "false") + ",";
-  json += "\"perm_empunhadura\":" + String(permEmpunhadura ? "true" : "false") + ",";
-  json += "\"perm_bateria_litio\":" + String(permBateriaLitio ? "true" : "false") + ",";
-  json += "\"perm_ia_maker\":" + String(permIaMaker ? "true" : "false") + ",";
-  json += "\"perm_refrigeracao\":" + String(permRefrigeracao ? "true" : "false") + ",";
-  json += "\"perm_titanio\":" + String(permTitanio ? "true" : "false") + ",";
-  json += "\"perm_overclock\":" + String(permOverclock ? "true" : "false") + ",";
-  json += "\"perm_nanobots\":" + String(permNanobots ? "true" : "false") + ",";
-  json += "\"perm_singularidade\":" + String(permSingularidade ? "true" : "false") + ",";
-  json += "\"perm_plasma_cutter\":" + String(permPlasmaCutter ? "true" : "false") + ",";
-  json += "\"perm_fusao_fria\":" + String(permFusaoFria ? "true" : "false") + ",";
-  json += "\"perm_hiperconducao\":" + String(permHiperconducao ? "true" : "false") + ",";
-  json += "\"perm_sinergia_quantica\":" + String(permSinergiaQuantica ? "true" : "false") + ",";
-  json += "\"perm_laser_gama\":" + String(permLaserGama ? "true" : "false") + ",";
-  json += "\"perm_taquions\":" + String(permTaquions ? "true" : "false") + ",";
-  json += "\"perm_materia_escura\":" + String(permMateriaEscura ? "true" : "false") + ",";
-  json += "\"perm_hiper_clique\":" + String(permHiperClique ? "true" : "false") + ",";
-  json += "\"perm_onipotencia_maker\":" + String(permOnipotenciaMaker ? "true" : "false");
-  json += "}}";
-  return json;
-}
-
 void notifyMega() {
   int totalOwned = 0;
   for (int i = 0; i < NUM_UPGRADES; i++) {
@@ -217,12 +147,6 @@ void notifyMega() {
   String payload = "MAKITA:" + String(makitas, 1) + "," + String(getTotalMps(), 1) + "," + String(getClickPower(), 1) + "," + String(totalOwned);
   megaSerial.println(payload);
   megaSerial.flush();
-}
-
-void broadcastState() {
-  String state = getGameStateJSON();
-  webSocket.broadcastTXT(state);
-  notifyMega();
 }
 
 void handleClick() {
@@ -237,202 +161,92 @@ void handleClick() {
   } else if (permEmpunhadura) {
     gain += (currentMps * 0.05);
   }
+
   makitas += gain;
-  notifyMega();
+  pendingPhysicalClicks++;
+  notifyMega(); // Atualização instantânea no display LCD (0ms)
 }
 
-// Processa a compra considerando id, 1, 10 ou MAX
-void processBuy(int index, String qtyStr) {
-  if (index < 0 || index >= NUM_UPGRADES) return;
+void syncWithCloud() {
+  if (WiFi.status() != WL_CONNECTED) {
+    return;
+  }
 
-  int remaining = MAX_OWNED - ownedUpgrades[index];
-  if (remaining <= 0) return;
+  WiFiClientSecure client;
+  client.setInsecure(); // Sem validação de certificado para economia de RAM
 
-  if (qtyStr == "max") {
-    while (ownedUpgrades[index] < MAX_OWNED) {
-      double cost = unitCost(index, ownedUpgrades[index]);
-      if (makitas < cost) break;
-      makitas -= cost;
-      ownedUpgrades[index]++;
-    }
+  HTTPClient http;
+  http.begin(client, STATE_URL);
+  http.addHeader("Content-Type", "application/json");
+
+  int httpCode = -1;
+  int clicksToSend = pendingPhysicalClicks;
+
+  if (clicksToSend > 0) {
+    String payload = "{\"action\":\"sync\",\"clicks\":" + String(clicksToSend) + "}";
+    httpCode = http.POST(payload);
   } else {
-    int requested = qtyStr.toInt();
-    int toBuy = min(requested, remaining);
-    
-    // Calcula custo total do lote
-    double totalCost = 0;
-    for (int i = 0; i < toBuy; i++) {
-      totalCost += unitCost(index, ownedUpgrades[index] + i);
-    }
-
-    if (makitas >= totalCost && toBuy > 0) {
-      makitas -= totalCost;
-      ownedUpgrades[index] += toBuy;
-    }
-  }
-  saveGameState();
-  broadcastState();
-}
-
-uint8_t calcChecksum(const EEPROMState &s) {
-  const uint8_t *p = (const uint8_t*)&s;
-  uint8_t cs = 0;
-  for (size_t i = 0; i < sizeof(EEPROMState) - 1; i++) {
-    cs ^= p[i];
-  }
-  return cs;
-}
-
-void saveEEPROM() {
-  // TODO: reimplementar persistência
-}
-
-bool loadEEPROM() {
-  // TODO: reimplementar persistência
-  return false;
-}
-
-void loadGameState() {
-  // TODO: reimplementar persistência
-}
-
-void saveGameState() {
-  // TODO: reimplementar persistência
-}
-
-void resetGameState() {
-  makitas = 0.0;
-  for (int i = 0; i < NUM_UPGRADES; i++) {
-    ownedUpgrades[i] = 0;
-  }
-  permLubrificante = false;
-  permDiscoDiamante = false;
-  permMotorBrushless = false;
-  permEmpunhadura = false;
-  permBateriaLitio = false;
-  permIaMaker = false;
-  permRefrigeracao = false;
-  permTitanio = false;
-  permOverclock = false;
-  permNanobots = false;
-  permSingularidade = false;
-  permPlasmaCutter = false;
-  permFusaoFria = false;
-  permHiperconducao = false;
-  permSinergiaQuantica = false;
-  permLaserGama = false;
-  permTaquions = false;
-  permMateriaEscura = false;
-  permHiperClique = false;
-  permOnipotenciaMaker = false;
-  
-  if (LittleFS.exists("/gamestate.json")) {
-    LittleFS.remove("/gamestate.json");
-  }
-  
-  // Limpa EEPROM
-  EEPROMState s;
-  memset(&s, 0, sizeof(EEPROMState));
-  s.magic = EEPROM_MAGIC;
-  s.makitas = 0.0;
-  s.checksum = calcChecksum(s);
-  EEPROM.put(0, s);
-  EEPROM.commit();
-
-  saveGameState();
-  
-  // Transmite JSON especial informando o reset explicito
-  String resetJson = "{\"isReset\":true,\"makitas\":0.0,\"mps\":0.0,\"clickPower\":1.0,\"owned\":{},\"perms\":{}}";
-  webSocket.broadcastTXT(resetJson);
-  notifyMega();
-  Serial.println("[STATE] Progresso resetado com sucesso.");
-}
-
-void processPermBuy(String permId, double cost) {
-  if (makitas < cost) return;
-
-  bool bought = false;
-  if (permId == "perm_lubrificante" && !permLubrificante) {
-    permLubrificante = true; bought = true;
-  } else if (permId == "perm_disco_diamante" && !permDiscoDiamante && permLubrificante) {
-    permDiscoDiamante = true; bought = true;
-  } else if (permId == "perm_motor_brushless" && !permMotorBrushless && permLubrificante) {
-    permMotorBrushless = true; bought = true;
-  } else if (permId == "perm_empunhadura" && !permEmpunhadura && permDiscoDiamante) {
-    permEmpunhadura = true; bought = true;
-  } else if (permId == "perm_bateria_litio" && !permBateriaLitio && permMotorBrushless) {
-    permBateriaLitio = true; bought = true;
-  } else if (permId == "perm_ia_maker" && !permIaMaker && permBateriaLitio) {
-    permIaMaker = true; bought = true;
-  } else if (permId == "perm_refrigeracao" && !permRefrigeracao && permMotorBrushless) {
-    permRefrigeracao = true; bought = true;
-  } else if (permId == "perm_titanio" && !permTitanio && permDiscoDiamante) {
-    permTitanio = true; bought = true;
-  } else if (permId == "perm_overclock" && !permOverclock && permEmpunhadura) {
-    permOverclock = true; bought = true;
-  } else if (permId == "perm_nanobots" && !permNanobots && permIaMaker) {
-    permNanobots = true; bought = true;
-  } else if (permId == "perm_singularidade" && !permSingularidade && permNanobots) {
-    permSingularidade = true; bought = true;
-  } else if (permId == "perm_plasma_cutter" && !permPlasmaCutter && permTitanio) {
-    permPlasmaCutter = true; bought = true;
-  } else if (permId == "perm_fusao_fria" && !permFusaoFria && permSingularidade) {
-    permFusaoFria = true; bought = true;
-  } else if (permId == "perm_hiperconducao" && !permHiperconducao && permFusaoFria) {
-    permHiperconducao = true; bought = true;
-  } else if (permId == "perm_sinergia_quantica" && !permSinergiaQuantica && permOverclock) {
-    permSinergiaQuantica = true; bought = true;
-  } else if (permId == "perm_laser_gama" && !permLaserGama && permPlasmaCutter) {
-    permLaserGama = true; bought = true;
-  } else if (permId == "perm_taquions" && !permTaquions && permHiperconducao) {
-    permTaquions = true; bought = true;
-  } else if (permId == "perm_materia_escura" && !permMateriaEscura && permTaquions) {
-    permMateriaEscura = true; bought = true;
-  } else if (permId == "perm_hiper_clique" && !permHiperClique && permLaserGama) {
-    permHiperClique = true; bought = true;
-  } else if (permId == "perm_onipotencia_maker" && !permOnipotenciaMaker && permMateriaEscura) {
-    permOnipotenciaMaker = true; bought = true;
+    httpCode = http.GET();
   }
 
-  if (bought) {
-    makitas -= cost;
-    saveGameState();
-    broadcastState();
-  }
-}
+  if (httpCode == HTTP_CODE_OK) {
+    String responsePayload = http.getString();
+    DynamicJsonDocument doc(2048);
+    DeserializationError err = deserializeJson(doc, responsePayload);
 
-void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
-  if (type == WStype_CONNECTED) {
-    String state = getGameStateJSON();
-    webSocket.sendTXT(num, state);
-  } else if (type == WStype_TEXT) {
-    String msg = String((char*)payload);
-    
-    if (msg == "CLICK") {
-      handleClick();
-    } else if (msg == "RESET") {
-      resetGameState();
-    } else if (msg.startsWith("BUY:")) {
-      // Formato: BUY:<id>:<qty>
-      int firstSep = msg.indexOf(':', 4);
-      if (firstSep != -1) {
-        String upId = msg.substring(4, firstSep);
-        String qtyStr = msg.substring(firstSep + 1);
-        int upIndex = getUpgradeIndex(upId);
-        if (upIndex != -1) {
-          processBuy(upIndex, qtyStr); // processBuy() já chama saveGameState() internamente
+    if (!err) {
+      if (doc.containsKey("makitas")) {
+        makitas = doc["makitas"].as<double>();
+      }
+
+      // Desconta os cliques confirmados pelo servidor
+      pendingPhysicalClicks -= clicksToSend;
+      if (pendingPhysicalClicks < 0) pendingPhysicalClicks = 0;
+
+      if (doc.containsKey("owned")) {
+        JsonObject ownedObj = doc["owned"].as<JsonObject>();
+        for (int i = 0; i < NUM_UPGRADES; i++) {
+          if (ownedObj.containsKey(UPGRADE_CONFIGS[i].id)) {
+            ownedUpgrades[i] = ownedObj[UPGRADE_CONFIGS[i].id].as<int>();
+          }
         }
       }
-    } else if (msg.startsWith("PERM_BUY:")) {
-      // Formato: PERM_BUY:<id>:<custo>
-      int firstSep = msg.indexOf(':', 9);
-      if (firstSep != -1) {
-        String permId = msg.substring(9, firstSep);
-        double cost = msg.substring(firstSep + 1).toDouble();
-        processPermBuy(permId, cost);
+
+      if (doc.containsKey("perms")) {
+        JsonObject permsObj = doc["perms"].as<JsonObject>();
+        permLubrificante = permsObj["perm_lubrificante"] | false;
+        permDiscoDiamante = permsObj["perm_disco_diamante"] | false;
+        permMotorBrushless = permsObj["perm_motor_brushless"] | false;
+        permEmpunhadura = permsObj["perm_empunhadura"] | false;
+        permBateriaLitio = permsObj["perm_bateria_litio"] | false;
+        permIaMaker = permsObj["perm_ia_maker"] | false;
+        permRefrigeracao = permsObj["perm_refrigeracao"] | false;
+        permTitanio = permsObj["perm_titanio"] | false;
+        permOverclock = permsObj["perm_overclock"] | false;
+        permNanobots = permsObj["perm_nanobots"] | false;
+        permSingularidade = permsObj["perm_singularidade"] | false;
+        permPlasmaCutter = permsObj["perm_plasma_cutter"] | false;
+        permFusaoFria = permsObj["perm_fusao_fria"] | false;
+        permHiperconducao = permsObj["perm_hiperconducao"] | false;
+        permSinergiaQuantica = permsObj["perm_sinergia_quantica"] | false;
+        permLaserGama = permsObj["perm_laser_gama"] | false;
+        permTaquions = permsObj["perm_taquions"] | false;
+        permMateriaEscura = permsObj["perm_materia_escura"] | false;
+        permHiperClique = permsObj["perm_hiper_clique"] | false;
+        permOnipotenciaMaker = permsObj["perm_onipotencia_maker"] | false;
       }
+
+      notifyMega();
+      Serial.printf("[CLOUD] Sync OK! Saldo: %.1f | MPS: %.1f\n", makitas, getTotalMps());
+    } else {
+      Serial.printf("[CLOUD] Erro parse JSON: %s\n", err.c_str());
     }
+  } else {
+    Serial.printf("[CLOUD] Falha HTTP: %d\n", httpCode);
   }
+
+  http.end();
+  client.stop();
 }
 
 void checkOTA() {
@@ -455,7 +269,7 @@ void checkOTA() {
 
   String payload = http.getString();
   http.end();
-  client.stop(); // Encerra conexão HTTP e libera memória SSL
+  client.stop();
 
   StaticJsonDocument<384> doc;
   DeserializationError err = deserializeJson(doc, payload);
@@ -465,34 +279,16 @@ void checkOTA() {
   }
 
   String fwUrl   = doc["firmware_url"] | "";
-  String fsUrl   = doc["fs_url"]       | "";
-  int remoteFwVer   = doc["firmware_version"] | 0;
-  int remoteFsVer   = doc["fs_version"]       | 0;
+  int remoteFwVer = doc["firmware_version"] | 0;
 
-  Serial.printf("[OTA] Local FW=%d FS=%d | Remoto FW=%d FS=%d\n",
-                CURRENT_FIRMWARE_VER, CURRENT_FS_VER,
-                remoteFwVer, remoteFsVer);
+  Serial.printf("[OTA] Local FW=%d | Remoto FW=%d\n", CURRENT_FIRMWARE_VER, remoteFwVer);
 
-  // 2. Atualiza FS do ESP (sem reboot)
-  if (remoteFsVer > CURRENT_FS_VER && fsUrl.length() > 0) {
-    client.stop();
-    Serial.println("[OTA] Atualizando LittleFS...");
-    ESPhttpUpdate.rebootOnUpdate(false);
-    t_httpUpdate_return ret = ESPhttpUpdate.updateFS(client, fsUrl);
-    if (ret == HTTP_UPDATE_OK) {
-      Serial.println("[OTA] LittleFS atualizado com sucesso.");
-    } else {
-      Serial.printf("[OTA] Falha no FS update: %s\n", ESPhttpUpdate.getLastErrorString().c_str());
-    }
-  }
-
-  // 3. Atualiza Firmware do ESP (com reboot automatico)
+  // Atualiza Firmware do ESP se houver versão mais recente
   if (remoteFwVer > CURRENT_FIRMWARE_VER && fwUrl.length() > 0) {
     client.stop();
     Serial.println("[OTA] Atualizando Firmware...");
     ESPhttpUpdate.rebootOnUpdate(true);
     t_httpUpdate_return ret = ESPhttpUpdate.update(client, fwUrl);
-    // Se chegou aqui, houve falha (sucesso causa reboot automatico)
     Serial.printf("[OTA] Falha no FW update: %s\n", ESPhttpUpdate.getLastErrorString().c_str());
   }
 }
@@ -523,16 +319,12 @@ void processarSerialMega() {
 }
 
 void setup() {
-  system_update_cpu_freq(160); // 160MHz para máxima precisão de baud rate na SoftwareSerial
+  system_update_cpu_freq(160); // 160MHz para estabilidade de temporização
   Serial.begin(115200);
   megaSerial.begin(GAME_BAUD_RATE);
 
   // Inicializa o pino de reset do Mega em modo Open-Drain (alta impedancia)
   pinMode(MEGA_RESET_PIN, INPUT);
-
-  if (!LittleFS.begin()) {
-    Serial.println("[FS] Erro ao montar LittleFS");
-  }
 
   WiFi.begin(ssid, password);
   Serial.print("[WiFi] Conectando");
@@ -542,70 +334,39 @@ void setup() {
     Serial.print(".");
   }
   Serial.println();
+
   if (WiFi.status() == WL_CONNECTED) {
     Serial.print("[WiFi] Conectado! IP: ");
     Serial.println(WiFi.localIP());
-    // Checa e aplica OTA antes de subir os serviços se conectado
+    // Checa OTA ao iniciar
     checkOTA();
   } else {
-    Serial.println("[WiFi] Nao conectado (operando em modo offline)");
+    Serial.println("[WiFi] Nao conectado (modo offline)");
   }
 
   // Reinicia o Arduino Mega para sincronizar inicializacao e LCD
   resetMega();
 
-  if (MDNS.begin(hostName)) {
-    MDNS.addService("http", "tcp", 80);
-    MDNS.addService("ws", "tcp", 81);
-  }
-
-  server.on("/", HTTP_GET, []() {
-    if (LittleFS.exists("/index.html")) {
-      File f = LittleFS.open("/index.html", "r");
-      server.streamFile(f, "text/html");
-      f.close();
-    } else {
-      server.send(404, "text/plain", "index.html nao encontrado");
-    }
-  });
-
-  // Serve arquivos de imagem se existirem na flash
-  server.onNotFound([]() {
-    if (LittleFS.exists(server.uri())) {
-      File f = LittleFS.open(server.uri(), "r");
-      server.streamFile(f, "image/png");
-      f.close();
-    } else {
-      server.send(404, "text/plain", "Arquivo nao encontrado");
-    }
-  });
-
-  server.begin();
-  webSocket.begin();
-  webSocket.onEvent(webSocketEvent);
-
-  notifyMega();
-  // Envia IP da ESP para o display LCD do Arduino Mega
-  if (WiFi.status() == WL_CONNECTED) {
-    megaSerial.println("IP:" + WiFi.localIP().toString());
-  } else {
-    megaSerial.println("IP:Sem WiFi");
-  }
+  // Envia endereço Web para a Linha 3 do LCD do Arduino Mega
+  megaSerial.println("WEB:pages.dev");
   megaSerial.flush();
+
+  // Sincronização inicial com o Cloudflare KV
+  syncWithCloud();
 }
 
+unsigned long lastTick = 0;
 unsigned long lastMegaUpdate = 0;
+unsigned long lastCloudSync = 0;
+const unsigned long CLOUD_SYNC_INTERVAL_MS = 30000; // Sincronização a cada 30 segundos
 
 void loop() {
-  MDNS.update();
-  server.handleClient();
-  webSocket.loop();
+  unsigned long now = millis();
 
-  // Recebe cliques do Arduino Mega de forma 100% não-bloqueante
+  // 1. Recebe cliques do Arduino Mega de forma 100% não-bloqueante
   processarSerialMega();
 
-  // Produção passiva autoritativa no ESP
-  unsigned long now = millis();
+  // 2. Produção passiva local contínua entre ciclos de sync
   if (now - lastTick >= 100) {
     float dt = (now - lastTick) / 1000.0;
     lastTick = now;
@@ -614,27 +375,26 @@ void loop() {
     }
   }
 
-  // Atualização de telemetria para o LCD do Arduino Mega a cada 250ms
+  // 3. Atualização contínua do LCD do Arduino Mega a cada 250ms
   if (now - lastMegaUpdate >= 250) {
     lastMegaUpdate = now;
     notifyMega();
   }
 
-  // Envia IP da ESP para o LCD do Arduino Mega periodicamente
-  static unsigned long lastIpUpdate = 0;
-  if (now - lastIpUpdate >= 4000) {
-    lastIpUpdate = now;
+  // 4. Garante que a Linha 3 do LCD continue exibindo o endereço do Pages
+  static unsigned long lastUrlDisplay = 0;
+  if (now - lastUrlDisplay >= 4000) {
+    lastUrlDisplay = now;
     if (WiFi.status() == WL_CONNECTED) {
-      megaSerial.println("IP:" + WiFi.localIP().toString());
+      megaSerial.println("WEB:pages.dev");
     } else {
-      megaSerial.println("IP:Sem WiFi");
+      megaSerial.println("WEB:Sem WiFi");
     }
   }
 
-  // Sincronização periódica suave com a Web a cada 1.5 segundos
-  if (now - lastBroadcast >= 1500) {
-    lastBroadcast = now;
-    broadcastState();
+  // 5. Sincronização periódica com a Nuvem (Cloudflare Pages & KV) a cada 30 segundos
+  if (now - lastCloudSync >= CLOUD_SYNC_INTERVAL_MS) {
+    lastCloudSync = now;
+    syncWithCloud();
   }
-
 }

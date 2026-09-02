@@ -30,7 +30,7 @@ double makitasGlobal = 0.0;
 double mpsGlobal = 0.0;
 double clickPowerGlobal = 1.0;
 int totalOwnedGlobal = 0;
-String espIP = "Aguardando...";
+String webInfo = "pages.dev";
 
 // Animação e feedback visual
 unsigned long ultimoClickVisual = 0;
@@ -238,7 +238,7 @@ void atualizarLCD() {
     printLinhaFormatada(3, ">> CORTE EFETUADO! <<");
   } else {
     if (modoInfoLinha3 == 0) {
-      printLinhaFormatada(3, "IP: " + espIP);
+      printLinhaFormatada(3, "Web: " + webInfo);
     } else if (modoInfoLinha3 == 1) {
       if (makitasGlobal >= 99000000000.0) {
         printLinhaFormatada(3, "** META 99B FEITA! **");
@@ -253,7 +253,7 @@ void atualizarLCD() {
     } else if (modoInfoLinha3 == 2) {
       printLinhaFormatada(3, "Oficinas: " + String(totalOwnedGlobal) + " un.");
     } else {
-      printLinhaFormatada(3, "IP: " + espIP);
+      printLinhaFormatada(3, " MakerSpace UNIFEI  ");
     }
   }
 }
@@ -263,11 +263,18 @@ char serialRxBuf[96];
 uint8_t serialRxIdx = 0;
 
 void processPacket(char *line) {
-  // Trata pacote de IP da ESP
+  // Trata pacote de URL ou IP da ESP
+  char *webStart = strstr(line, "WEB:");
+  if (webStart) {
+    webInfo = String(webStart + 4);
+    webInfo.trim();
+    precisaAtualizarLCD = true;
+    return;
+  }
   char *ipStart = strstr(line, "IP:");
   if (ipStart) {
-    espIP = String(ipStart + 3);
-    espIP.trim();
+    webInfo = String(ipStart + 3);
+    webInfo.trim();
     precisaAtualizarLCD = true;
     return;
   }
