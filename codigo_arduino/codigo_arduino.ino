@@ -4,15 +4,23 @@
 
 #define GAME_BAUD_RATE 38400
 
-const int BUTTON_PIN = 7;
+// Configuração dos Pinos do Botão Físico (Break-Before-Make)
+const int PIN_BOTAO_NO = 7; // Normal Aberto (NO) -> Conectado ao pino 7 (fecha no GND ao pressionar)
+const int PIN_BOTAO_NC = 6; // Normal Fechado (NC) -> Conectado ao pino 6 (fecha no GND ao soltar)
 
 // Ponteiro dinâmico para o LCD (permite auto-detecção de endereço I2C: 0x27, 0x3F, etc.)
 LiquidCrystal_I2C* lcd = nullptr;
 
-// Debounce do Botão Físico
-bool ultimoEstadoBotao = HIGH;
-unsigned long ultimoDebounce = 0;
-const unsigned long tempoDebounce = 35;
+// Controle Ultra-Rápido do Botão (SR Latch mecânico sem delay)
+bool botaoArmado = true;
+unsigned long ultimoCliqueTempo = 0;
+const unsigned long JANELA_DUPLO_CLIQUE = 350; // ms para detecção de clique duplo
+bool cliqueDuploAtivo = false;
+
+// Controle de atualização desacoplada do LCD (elimina latência I2C)
+bool precisaAtualizarLCD = false;
+unsigned long ultimoUpdateLCD = 0;
+const unsigned long INTERVALO_UPDATE_LCD = 75; // Atualiza LCD em no máximo ~13 FPS
 
 // Estado do Jogo recebido do ESP8266
 double makitasGlobal = 0.0;
@@ -224,7 +232,11 @@ void atualizarLCD() {
 
   // Linha 3: Feedback de Clique ou Status Rotativo com IP e Meta 99B
   if (clickAtivo) {
-    printLinhaFormatada(3, ">> CORTE EFETUADO! <<");
+    if (cliqueDuploAtivo) {
+      printLinhaFormatada(3, ">> CLIQUE DUPLO! <<");
+    } else {
+      printLinhaFormatada(3, ">> CORTE EFETUADO! <<");
+    }
   } else {
     if (modoInfoLinha3 == 0) {
       printLinhaFormatada(3, "IP: " + espIP);
@@ -257,7 +269,7 @@ void processPacket(char *line) {
   if (ipStart) {
     espIP = String(ipStart + 3);
     espIP.trim();
-    atualizarLCD();
+    precisaAtualizarLCD = true;
     return;
   }
 
@@ -277,7 +289,7 @@ void processPacket(char *line) {
   if (!sep2) {
     makitasGlobal = mkt;
     mpsGlobal = atof(p2);
-    atualizarLCD();
+    precisaAtualizarLCD = true;
     return;
   }
   *sep2 = '\0';
@@ -289,7 +301,7 @@ void processPacket(char *line) {
     makitasGlobal = mkt;
     mpsGlobal = mps;
     clickPowerGlobal = atof(p3);
-    atualizarLCD();
+    precisaAtualizarLCD = true;
     return;
   }
   *sep3 = '\0';
@@ -303,7 +315,7 @@ void processPacket(char *line) {
   clickPowerGlobal = cp;
   totalOwnedGlobal = ow;
   
-  atualizarLCD();
+  precisaAtualizarLCD = true;
 }
 
 void processarSerialRecebida() {
@@ -327,7 +339,8 @@ void processarSerialRecebida() {
 }
 
 void setup() {
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  pinMode(PIN_BOTAO_NO, INPUT_PULLUP);
+  pinMode(PIN_BOTAO_NC, INPUT_PULLUP);
 
   // Comunicação Serial0 com ESP8266 a 38400 baud (estável e sem perda de pacotes)
   Serial.begin(GAME_BAUD_RATE);
@@ -367,20 +380,33 @@ void setup() {
 void loop() {
   unsigned long now = millis();
 
-  // 1. Leitura e Debounce do Botão Físico com Resposta Instantânea
-  bool leitura = digitalRead(BUTTON_PIN);
-  if (leitura != ultimoEstadoBotao) {
-    if ((now - ultimoDebounce) > tempoDebounce) {
-      if (leitura == LOW) { // Botão físico pressionado
-        Serial.println("CLICK");
-        makitasGlobal += clickPowerGlobal;
-        ultimoClickVisual = now;
-        frameAnimacao = (frameAnimacao + 1) % 4;
-        atualizarLCD();
-      }
-      ultimoDebounce = now;
-      ultimoEstadoBotao = leitura;
-    }
+  // 1. Leitura Ultra-Rápida do Botão Físico com NO (Pino 7) e NC (Pino 6)
+  // Break-Before-Make mecânico: zero delay de debounce, resposta instantânea em microssegundos
+  bool noPress = (digitalRead(PIN_BOTAO_NO) == LOW); // LOW quando pressionado
+  bool ncSolto = (digitalRead(PIN_BOTAO_NC) == LOW); // LOW quando solto (em repouso)
+
+  // Re-arma assim que o contato NC fecha no repouso (ou fallback de 15ms se NC não conectado)
+  if (ncSolto) {
+    botaoArmado = true;
+  } else if (!noPress && (now - ultimoCliqueTempo > 15)) {
+    // Fallback de segurança caso o usuário ainda não tenha conectado o pino 6
+    botaoArmado = true;
+  }
+
+  // Disparo imediato assim que o contato NO fecha
+  if (noPress && botaoArmado) {
+    botaoArmado = false; // Trava o gatilho até o botão ser solto
+
+    bool isDouble = (now - ultimoCliqueTempo <= JANELA_DUPLO_CLIQUE);
+    ultimoCliqueTempo = now;
+    cliqueDuploAtivo = isDouble;
+
+    // Envia o clique imediatamente para a ESP
+    Serial.println("CLICK");
+    makitasGlobal += clickPowerGlobal;
+    ultimoClickVisual = now;
+    frameAnimacao = (frameAnimacao + 1) % 4;
+    precisaAtualizarLCD = true;
   }
 
   // 2. Processa pacotes seriais do ESP8266 de forma 100% não-bloqueante
@@ -391,13 +417,20 @@ void loop() {
     ultimoTickAnimacao = now;
     if (mpsGlobal > 0 || (now - ultimoClickVisual < duracaoFeedbackClick)) {
       frameAnimacao = (frameAnimacao + 1) % 4;
+      precisaAtualizarLCD = true;
     }
-    atualizarLCD();
   }
 
   if (now - ultimoTickInfo >= 3200) {
     ultimoTickInfo = now;
     modoInfoLinha3 = (modoInfoLinha3 + 1) % 4;
+    precisaAtualizarLCD = true;
+  }
+
+  // 4. Atualização não-bloqueante e cadenciada do Display LCD (elimina travamentos I2C)
+  if (precisaAtualizarLCD && (now - ultimoUpdateLCD >= INTERVALO_UPDATE_LCD)) {
+    precisaAtualizarLCD = false;
+    ultimoUpdateLCD = now;
     atualizarLCD();
   }
 }
