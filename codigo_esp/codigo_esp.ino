@@ -34,7 +34,6 @@ struct EEPROMState {
 // NÃO edite manualmente. O Cloudflare Pages injeta o valor correto antes de compilar.
 #define CURRENT_FIRMWARE_VER 0
 #define CURRENT_FS_VER       0
-#define CURRENT_MEGA_VER     0
 
 #define MEGA_RESET_PIN D5
 
@@ -48,7 +47,6 @@ ESP8266WebServer server(80);
 WebSocketsServer webSocket = WebSocketsServer(81);
 
 #define GAME_BAUD_RATE 38400
-#define BOOTLOADER_BAUD_RATE 115200
 
 // D6 = RX (Mega TX0 / Pino 1), D7 = TX (Mega RX0 / Pino 0)
 SoftwareSerial megaSerial(D6, D7);
@@ -60,359 +58,8 @@ void resetMega() {
   digitalWrite(MEGA_RESET_PIN, LOW);
   delay(60);
   pinMode(MEGA_RESET_PIN, INPUT); // Retorna imediatamente para Hi-Z (alta impedancia)
-  delay(1500); // Aguarda bootloader e inicializacao do Mega
+  delay(1200); // Aguarda inicializacao do Mega
   Serial.println("[MEGA] Reset concluido.");
-}
-
-// ===== ROTINA STK500v2 PARA GRAVAÇÃO DO ARDUINO MEGA =====
-bool sendStk500v2(Stream &s, const uint8_t *payload, uint16_t len, uint8_t *resp, uint16_t &respLen, uint8_t seqNum = 1, uint32_t timeoutMs = 600) {
-  // Limpa qualquer byte residual na serial antes de enviar
-  while (s.available()) s.read();
-  if (resp) memset(resp, 0xFF, 64);
-
-  uint8_t header[5];
-  header[0] = 0x1B; // MESSAGE_START
-  header[1] = seqNum; // seqNum=1 sempre aceito pelo bootloader STK500v2 (evita dessincronismo)
-  header[2] = (len >> 8) & 0xFF;
-  header[3] = len & 0xFF;
-  header[4] = 0x0E; // TOKEN
-
-  uint8_t checksum = 0;
-  for (int i = 0; i < 5; i++) checksum ^= header[i];
-  for (uint16_t i = 0; i < len; i++) checksum ^= payload[i];
-
-  yield();
-  ESP.wdtFeed();
-  noInterrupts(); // Garante envio sem jitter de interrupções de Wi-Fi (SoftwareSerial a 115200 baud)
-  s.write(header, 5);
-  s.write(payload, len);
-  s.write(checksum);
-  s.flush();
-  interrupts();
-
-  // Aguarda resposta sincronizando no 0x1B inicial
-  unsigned long start = millis();
-  int discarded = 0;
-  uint8_t discBuf[8];
-
-  while (millis() - start < timeoutMs) {
-    while (s.available() && s.peek() != 0x1B) {
-      uint8_t b = s.read();
-      if (discarded < (int)sizeof(discBuf)) discBuf[discarded] = b;
-      discarded++;
-    }
-    if (s.available() >= 5 && s.peek() == 0x1B) break;
-    delay(1);
-    yield();
-  }
-
-  if (s.available() < 5 || s.read() != 0x1B) {
-    int avail = s.available();
-    Serial.printf("[STK-DBG] Timeout cmd=0x%02X (avail=%d disc=%d", payload ? payload[0] : 0, avail, discarded);
-    if (discarded > 0) {
-      Serial.print(" disc=[");
-      for (int i = 0; i < min(discarded, (int)sizeof(discBuf)); i++) Serial.printf("0x%02X ", discBuf[i]);
-      Serial.print("]");
-    }
-    if (avail > 0) {
-      Serial.print(" buf=[");
-      int show = min(avail, 4);
-      for (int i = 0; i < show; i++) Serial.printf("0x%02X ", s.read());
-      Serial.print("]");
-    }
-    Serial.println(")");
-    return false;
-  }
-  uint8_t rSeq = s.read();
-  uint8_t rLenH = s.read();
-  uint8_t rLenL = s.read();
-  uint8_t rTok = s.read();
-  if (rTok != 0x0E) {
-    Serial.printf("[STK-DBG] Bad token: 0x%02X\n", rTok);
-    return false;
-  }
-
-  uint16_t rLen = ((uint16_t)rLenH << 8) | rLenL;
-  start = millis();
-  while (s.available() < (rLen + 1)) {
-    if (millis() - start > timeoutMs) {
-      Serial.printf("[STK-DBG] Body timeout (avail=%d need=%d)\n", s.available(), rLen + 1);
-      return false;
-    }
-    delay(1);
-    yield();
-  }
-
-  uint8_t rCheck = 0x1B ^ rSeq ^ rLenH ^ rLenL ^ rTok;
-  for (uint16_t i = 0; i < rLen; i++) {
-    uint8_t b = s.read();
-    if (resp && i < 64) resp[i] = b;
-    rCheck ^= b;
-  }
-  uint8_t expCheck = s.read();
-
-  if (rCheck != expCheck) {
-    Serial.printf("[STK-DBG] Checksum mismatch: calc 0x%02X != exp 0x%02X\n", rCheck, expCheck);
-    return false;
-  }
-  respLen = rLen;
-  return true;
-}
-
-bool updateMega(WiFiClientSecure &client, const String &url) {
-  Serial.println("[OTA-MEGA] Baixando binario do Arduino Mega...");
-
-  client.stop(); // Libera buffers SSL e fecha conexões residuais
-  HTTPClient http;
-  http.begin(client, url);
-  int httpCode = http.GET();
-  if (httpCode != HTTP_CODE_OK) {
-    Serial.printf("[OTA-MEGA] Falha HTTP: %d\n", httpCode);
-    http.end();
-    client.stop();
-    return false;
-  }
-
-  int totalBytes = http.getSize();
-  Serial.printf("[OTA-MEGA] Tamanho: %d bytes\n", totalBytes);
-
-  // Salva no LittleFS temporariamente
-  File f = LittleFS.open("/mega_temp.bin", "w");
-  if (!f) {
-    Serial.println("[OTA-MEGA] Erro ao abrir LittleFS para salvar temporario.");
-    http.end();
-    client.stop();
-    return false;
-  }
-
-  WiFiClient *stream = http.getStreamPtr();
-  uint8_t tempBuf[512];
-  int written = 0;
-  unsigned long dlStart = millis();
-
-  while (http.connected() && (written < totalBytes || totalBytes == -1)) {
-    ESP.wdtFeed();
-    yield();
-    size_t size = stream->available();
-    if (size) {
-      int c = stream->readBytes(tempBuf, min(size, sizeof(tempBuf)));
-      f.write(tempBuf, c);
-      written += c;
-      dlStart = millis();
-    }
-    if (written == totalBytes) break;
-    if (millis() - dlStart > 8000) {
-      Serial.println("[OTA-MEGA] Timeout no download HTTP.");
-      f.close();
-      LittleFS.remove("/mega_temp.bin");
-      http.end();
-      client.stop();
-      return false;
-    }
-    delay(1);
-    yield();
-  }
-  f.close();
-  http.end();
-  client.stop(); // Desconecta e libera RAM do BearSSL antes de gravar via Serial
-  Serial.printf("[OTA-MEGA] Download concluido: %d bytes salvos no LittleFS.\n", written);
-
-  // Abre o arquivo local para gravacao via Serial
-  f = LittleFS.open("/mega_temp.bin", "r");
-  if (!f) {
-    Serial.println("[OTA-MEGA] Erro ao reabrir arquivo temporario.");
-    return false;
-  }
-
-  // 1. Abre a serial a 115200 ANTES do reset para armar a recepção
-  megaSerial.begin(BOOTLOADER_BAUD_RATE);
-  delay(10);
-  while (megaSerial.available()) megaSerial.read();
-
-  // Pulso de reset no Mega
-  digitalWrite(MEGA_RESET_PIN, LOW);
-  pinMode(MEGA_RESET_PIN, OUTPUT);
-  delay(100);
-  pinMode(MEGA_RESET_PIN, INPUT); // Solta em Hi-Z
-  delay(80);                      // 80ms: bootloader inicializa a UART0
-
-  while (megaSerial.available()) megaSerial.read();
-
-  // Handshake imediato (CMD_SIGN_ON) dentro da janela de escuta do bootloader
-  bool syncOk = false;
-  uint8_t signOnCmd[] = { 0x01 };
-  uint16_t respLen = 0;
-  uint8_t resp[64];
-
-  Serial.println("[OTA-MEGA] Tentando handshake STK500v2 @ 115200 baud...");
-  for (int attempt = 0; attempt < 12 && !syncOk; attempt++) {
-    ESP.wdtFeed();
-    yield();
-    if (sendStk500v2(megaSerial, signOnCmd, sizeof(signOnCmd), resp, respLen, 1, 150)) {
-      if (respLen >= 2 && resp[0] == 0x01 && resp[1] == 0x00) {
-        syncOk = true;
-        Serial.println("[OTA-MEGA] Handshake STK500v2 OK @ 115200!");
-        break;
-      }
-    }
-    delay(20);
-  }
-
-  // Se não respondeu a 115200, reseta o Mega novamente e tenta 57600 baud (bootloader de clones)
-  if (!syncOk) {
-    Serial.println("[OTA-MEGA] Sem resposta a 115200. Novo reset para tentar 57600 baud...");
-    megaSerial.begin(57600);
-    delay(10);
-    while (megaSerial.available()) megaSerial.read();
-
-    digitalWrite(MEGA_RESET_PIN, LOW);
-    pinMode(MEGA_RESET_PIN, OUTPUT);
-    delay(100);
-    pinMode(MEGA_RESET_PIN, INPUT);
-    delay(80);
-    while (megaSerial.available()) megaSerial.read();
-
-    for (int attempt = 0; attempt < 12 && !syncOk; attempt++) {
-      ESP.wdtFeed();
-      yield();
-      if (sendStk500v2(megaSerial, signOnCmd, sizeof(signOnCmd), resp, respLen, 1, 150)) {
-        if (respLen >= 2 && resp[0] == 0x01 && resp[1] == 0x00) {
-          syncOk = true;
-          Serial.println("[OTA-MEGA] Handshake STK500v2 OK @ 57600!");
-          break;
-        }
-      }
-      delay(20);
-    }
-  }
-
-  if (!syncOk) {
-    Serial.println("[OTA-MEGA] Erro: Arduino Mega nao respondeu ao STK500v2.");
-    f.close();
-    LittleFS.remove("/mega_temp.bin");
-    megaSerial.begin(GAME_BAUD_RATE);
-    return false;
-  }
-
-  // 2. Enter Prog Mode (12 bytes padrão STK500v2)
-  uint8_t enterProg[] = { 0x10, 0xC8, 0x64, 0x19, 0x20, 0x00, 0x53, 0x03, 0xAC, 0x53, 0x00, 0x00 };
-  Serial.println("[OTA-MEGA] Ativando modo de programacao (EnterProg)...");
-  if (!sendStk500v2(megaSerial, enterProg, sizeof(enterProg), resp, respLen, 1, 1000) || resp[1] != 0x00) {
-    Serial.printf("[OTA-MEGA] Falha ao ativar modo de programacao (resp=0x%02X)\n", resp[1]);
-    f.close();
-    LittleFS.remove("/mega_temp.bin");
-    megaSerial.begin(GAME_BAUD_RATE);
-    return false;
-  }
-  Serial.println("[OTA-MEGA] Modo de programacao ATIVADO com sucesso!");
-
-  // 3. Grava páginas de 256 bytes lendo do arquivo local
-  const uint16_t PAGE_SIZE = 256;
-  uint8_t pageBuffer[PAGE_SIZE];
-  uint32_t currentAddr = 0;
-  uint8_t progPayload[10 + PAGE_SIZE];
-
-  while (currentAddr < (uint32_t)written) {
-    ESP.wdtFeed();
-    yield();
-
-    uint16_t toRead = min((uint32_t)PAGE_SIZE, (uint32_t)(written - currentAddr));
-    size_t bytesRead = f.read(pageBuffer, toRead);
-
-    // Aborta se a leitura do LittleFS retornar menos bytes que o esperado (falha de I/O)
-    if (bytesRead != toRead) {
-      Serial.printf("[OTA-MEGA] Erro: leitura LittleFS incompleta (%d/%d bytes), abortando.\n", bytesRead, toRead);
-      uint8_t leaveProgErr[] = { 0x11, 0x01, 0x01 };
-      sendStk500v2(megaSerial, leaveProgErr, sizeof(leaveProgErr), resp, respLen, 1, 1000);
-      f.close();
-      LittleFS.remove("/mega_temp.bin");
-      megaSerial.begin(GAME_BAUD_RATE);
-      return false;
-    }
-
-    while (bytesRead < PAGE_SIZE) {
-      pageBuffer[bytesRead++] = 0xFF;
-    }
-
-    bool pageOk = false;
-    for (int retry = 0; retry < 5; retry++) {
-      ESP.wdtFeed();
-      // CMD_LOAD_ADDRESS (endereço de flash em words de 16-bit para ATmega2560)
-      // Bit 31 é setado SOMENTE se o endereço ultrapassar 64K words (128KB)
-      uint32_t wordAddr = currentAddr >> 1;
-      if (wordAddr >= 0x10000) {
-        wordAddr |= 0x80000000;
-      }
-      uint8_t loadAddrCmd[] = {
-        0x06,
-        (uint8_t)((wordAddr >> 24) & 0xFF),
-        (uint8_t)((wordAddr >> 16) & 0xFF),
-        (uint8_t)((wordAddr >> 8) & 0xFF),
-        (uint8_t)(wordAddr & 0xFF)
-      };
-
-      if (!sendStk500v2(megaSerial, loadAddrCmd, sizeof(loadAddrCmd), resp, respLen, 1, 600) || resp[1] != 0x00) {
-        delay(5);
-        continue;
-      }
-
-      // CMD_PROGRAM_FLASH_ISP
-      progPayload[0] = 0x13;
-      progPayload[1] = (PAGE_SIZE >> 8) & 0xFF;
-      progPayload[2] = PAGE_SIZE & 0xFF;
-      progPayload[3] = 0xC1;
-      progPayload[4] = 0x0A;
-      progPayload[5] = 0x40;
-      progPayload[6] = 0x4C;
-      progPayload[7] = 0x00;
-      progPayload[8] = 0x00;
-      progPayload[9] = 0x00;
-      memcpy(&progPayload[10], pageBuffer, PAGE_SIZE);
-
-      if (sendStk500v2(megaSerial, progPayload, sizeof(progPayload), resp, respLen, 1, 600) && resp[1] == 0x00) {
-        pageOk = true;
-        break;
-      }
-      delay(5);
-    }
-
-    if (!pageOk) {
-      Serial.printf("[OTA-MEGA] Erro gravando pagina em 0x%X (status 0x%02X)\n", currentAddr, resp[1]);
-      uint8_t leaveProg[] = { 0x11, 0x01, 0x01 };
-      sendStk500v2(megaSerial, leaveProg, sizeof(leaveProg), resp, respLen, 1, 1000);
-      f.close();
-      LittleFS.remove("/mega_temp.bin");
-      megaSerial.begin(GAME_BAUD_RATE);
-      return false;
-    }
-
-    currentAddr += toRead;
-    if ((currentAddr % 1024) == 0 || currentAddr >= (uint32_t)written) {
-      Serial.printf("[OTA-MEGA] Progresso: %d / %d bytes (%.0f%%)\n",
-                    currentAddr, written, (float)currentAddr * 100.0 / written);
-    }
-    delay(5);
-    yield();
-  }
-
-  // 4. Leave Prog Mode
-  uint8_t leaveProg[] = { 0x11, 0x01, 0x01 };
-  sendStk500v2(megaSerial, leaveProg, sizeof(leaveProg), resp, respLen, 1, 1000);
-
-  f.close();
-  LittleFS.remove("/mega_temp.bin");
-
-  // Reinicia o Mega para rodar o novo código e aguarda boot completo
-  pinMode(MEGA_RESET_PIN, OUTPUT);
-  digitalWrite(MEGA_RESET_PIN, LOW);
-  delay(100);
-  pinMode(MEGA_RESET_PIN, INPUT);
-  delay(2000);
-
-  megaSerial.begin(GAME_BAUD_RATE);
-
-  Serial.println("[OTA-MEGA] Arduino Mega regravado com sucesso!");
-  return true;
 }
 
 // ===== ESTADO DO JOGO =====
@@ -819,19 +466,12 @@ void checkOTA() {
 
   String fwUrl   = doc["firmware_url"] | "";
   String fsUrl   = doc["fs_url"]       | "";
-  String megaUrl = doc["mega_url"]     | "";
   int remoteFwVer   = doc["firmware_version"] | 0;
   int remoteFsVer   = doc["fs_version"]       | 0;
-  int remoteMegaVer = doc["mega_version"]     | 0;
 
-  Serial.printf("[OTA] Local FW=%d FS=%d MEGA=%d | Remoto FW=%d FS=%d MEGA=%d\n",
-                CURRENT_FIRMWARE_VER, CURRENT_FS_VER, CURRENT_MEGA_VER,
-                remoteFwVer, remoteFsVer, remoteMegaVer);
-
-  // 1. Atualiza o Arduino Mega se houver nova versao
-  if (remoteMegaVer > CURRENT_MEGA_VER && megaUrl.length() > 0) {
-    updateMega(client, megaUrl);
-  }
+  Serial.printf("[OTA] Local FW=%d FS=%d | Remoto FW=%d FS=%d\n",
+                CURRENT_FIRMWARE_VER, CURRENT_FS_VER,
+                remoteFwVer, remoteFsVer);
 
   // 2. Atualiza FS do ESP (sem reboot)
   if (remoteFsVer > CURRENT_FS_VER && fsUrl.length() > 0) {
@@ -978,6 +618,17 @@ void loop() {
   if (now - lastMegaUpdate >= 250) {
     lastMegaUpdate = now;
     notifyMega();
+  }
+
+  // Envia IP da ESP para o LCD do Arduino Mega periodicamente
+  static unsigned long lastIpUpdate = 0;
+  if (now - lastIpUpdate >= 4000) {
+    lastIpUpdate = now;
+    if (WiFi.status() == WL_CONNECTED) {
+      megaSerial.println("IP:" + WiFi.localIP().toString());
+    } else {
+      megaSerial.println("IP:Sem WiFi");
+    }
   }
 
   // Sincronização periódica suave com a Web a cada 1.5 segundos

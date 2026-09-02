@@ -222,12 +222,12 @@ void atualizarLCD() {
     lcd->print(mpsStr.substring(0, espacoRestante));
   }
 
-  // Linha 3: Feedback de Clique ou Status Rotativo com Meta 99B
+  // Linha 3: Feedback de Clique ou Status Rotativo com IP e Meta 99B
   if (clickAtivo) {
     printLinhaFormatada(3, ">> CORTE EFETUADO! <<");
   } else {
     if (modoInfoLinha3 == 0) {
-      printLinhaFormatada(3, "Oficinas: " + String(totalOwnedGlobal) + " un.");
+      printLinhaFormatada(3, "IP: " + espIP);
     } else if (modoInfoLinha3 == 1) {
       if (makitasGlobal >= 99000000000.0) {
         printLinhaFormatada(3, "** META 99B FEITA! **");
@@ -240,7 +240,7 @@ void atualizarLCD() {
         }
       }
     } else if (modoInfoLinha3 == 2) {
-      printLinhaFormatada(3, "MakerSpace UNIFEI");
+      printLinhaFormatada(3, "Oficinas: " + String(totalOwnedGlobal) + " un.");
     } else {
       printLinhaFormatada(3, "IP: " + espIP);
     }
