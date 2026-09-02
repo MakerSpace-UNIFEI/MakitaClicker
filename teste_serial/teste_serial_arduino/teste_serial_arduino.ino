@@ -1,41 +1,42 @@
 // =============================================================
-//  TESTE DE COMUNICAÇÃO SERIAL — Arduino Mega (lado Mega)
+//  TESTE DE COMUNICAÇÃO SERIAL E BOOTLOADER — Arduino Mega
 //  Pinos: TX0 (pino 1) → D6 do ESP | RX0 (pino 0) ← D7 do ESP
-//  Baud rate: 38400 (igual ao projeto principal)
-//
-//  O que este sketch faz:
-//   1. A cada 2 segundos envia "PING:<contador>" para o ESP.
-//   2. Qualquer coisa recebida do ESP é exibida no Serial Monitor.
-//   3. Se receber "PONG" (resposta do ESP), acende o LED onboard.
-//   4. Também repassa o que você digitar no Serial Monitor para o ESP.
+//  Pino RESET do Mega ← D5 do ESP
+//  Baud rate: 115200 (a mesma velocidade usada pelo Bootloader)
 // =============================================================
 
-#define GAME_BAUD_RATE 38400
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
 
-// LED onboard do Arduino Mega (pino 13)
+#define BAUD_RATE 115200
 #define LED_PIN 13
 
+LiquidCrystal_I2C *lcd = nullptr;
+
 unsigned long ultimoPing = 0;
-const unsigned long intervaloPing = 2000; // ms
-uint32_t contadorPing = 0;
+const unsigned long intervaloPing = 2000;
+uint32_t contadorEnvios = 0;
+uint32_t contadorRecebidos = 0;
 
 bool ledAtivo = false;
 unsigned long ledInicio = 0;
-const unsigned long ledDuracao = 300; // ms
 
-void setup() {
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
+uint8_t detectarEnderecoI2C() {
+  Wire.begin();
+  byte addrs[] = { 0x27, 0x3F, 0x20, 0x26, 0x38 };
+  for (byte i = 0; i < sizeof(addrs); i++) {
+    Wire.beginTransmission(addrs[i]);
+    if (Wire.endTransmission() == 0) return addrs[i];
+  }
+  return 0x27; // fallback padrao
+}
 
-  // Serial0: comunicação com o ESP via D6/D7 (pinos físicos 0 e 1)
-  Serial.begin(GAME_BAUD_RATE);
-
-  // Serial1: opcional — use um segundo adaptador USB-Serial no pino 18(TX1)/19(RX1)
-  // para ver os logs sem interferir no canal com o ESP.
-  // Se não tiver, comente Serial1 e use apenas Serial Monitor no baud 38400.
-  Serial1.begin(115200);
-  Serial1.println(F("=== ARDUINO MEGA: Teste Serial ESP ==="));
-  Serial1.println(F("Aguardando comunicacao em Serial0 @ 38400..."));
+void printLcd(uint8_t row, String txt) {
+  if (!lcd) return;
+  while (txt.length() < 20) txt += " ";
+  if (txt.length() > 20) txt = txt.substring(0, 20);
+  lcd->setCursor(0, row);
+  lcd->print(txt);
 }
 
 void piscarLED() {
@@ -44,52 +45,68 @@ void piscarLED() {
   digitalWrite(LED_PIN, HIGH);
 }
 
+void setup() {
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
+
+  // Inicializa comunicação com o ESP a 115200
+  Serial.begin(BAUD_RATE);
+
+  // Inicializa LCD I2C se presente
+  uint8_t addr = detectarEnderecoI2C();
+  lcd = new LiquidCrystal_I2C(addr, 20, 4);
+  lcd->init();
+  lcd->backlight();
+  lcd->clear();
+
+  printLcd(0, "== TESTE SERIAL ==");
+  printLcd(1, "Baud: 115200");
+  printLcd(2, "Mega INICIALIZADO!");
+  printLcd(3, "Aguardando ESP...");
+
+  piscarLED();
+}
+
 void loop() {
   unsigned long now = millis();
 
-  // ── Desliga LED após duração ──────────────────────────────────
-  if (ledAtivo && (now - ledInicio >= ledDuracao)) {
+  // Apaga LED apos pulso de 150ms
+  if (ledAtivo && (now - ledInicio >= 150)) {
     ledAtivo = false;
     digitalWrite(LED_PIN, LOW);
   }
 
-  // ── Envia PING periódico para o ESP ──────────────────────────
+  // 1. Monitora nivel fisico do pino 0 (RX0) no LCD
+  bool nivelRx0 = digitalRead(0);
+  static bool ultimoNivelRx0 = !nivelRx0;
+  if (nivelRx0 != ultimoNivelRx0) {
+    ultimoNivelRx0 = nivelRx0;
+    printLcd(1, "Baud:115200 RX0:" + String(nivelRx0 ? "HIGH(5V)" : "LOW(0V) "));
+  }
+
+  // 2. Envia PING periodico para o ESP a cada 2s
   if (now - ultimoPing >= intervaloPing) {
     ultimoPing = now;
-    contadorPing++;
+    contadorEnvios++;
 
-    String msg = "PING:" + String(contadorPing);
-    Serial.println(msg);  // Envia para o ESP
+    String ping = "PING_MEGA:" + String(contadorEnvios);
+    Serial.println(ping);
 
-    Serial1.print(F("[Mega→ESP] "));
-    Serial1.println(msg);
+    printLcd(3, "TX #" + String(contadorEnvios) + " " + ping);
   }
 
-  // ── Recebe dados do ESP e exibe no Serial1 (monitor) ─────────
-  while (Serial.available() > 0) {
+  // 3. Le respostas do ESP
+  if (Serial.available() > 0) {
     String recebido = Serial.readStringUntil('\n');
     recebido.trim();
-    if (recebido.length() == 0) continue;
-
-    Serial1.print(F("[ESP→Mega] "));
-    Serial1.println(recebido);
-
-    // Se receber "PONG", acende LED como confirmação visual
-    if (recebido.startsWith("PONG")) {
+    if (recebido.length() > 0) {
+      contadorRecebidos++;
       piscarLED();
-      Serial1.println(F("  ✓ PONG recebido! Canal OK."));
-    }
 
-    // Se receber o pacote real do jogo, valida o formato
-    if (recebido.startsWith("MAKITA:")) {
-      Serial1.println(F("  ✓ Pacote MAKITA detectado! Formato OK."));
-    }
-  }
+      // Eco de confirmacao de volta para o ESP
+      Serial.println("ECHO_MEGA:" + recebido);
 
-  // ── Repassa digitação do Serial Monitor para o ESP ───────────
-  // (Útil para testar comandos manuais como "CLICK")
-  while (Serial1.available() > 0) {
-    char c = Serial1.read();
-    Serial.write(c);
+      printLcd(2, "RX #" + String(contadorRecebidos) + ": " + recebido.substring(0, 13));
+    }
   }
 }

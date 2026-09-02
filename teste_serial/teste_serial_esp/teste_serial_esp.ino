@@ -1,122 +1,170 @@
 // =============================================================
-//  TESTE DE COMUNICAÇÃO SERIAL — ESP8266 (lado ESP)
-//  Pinos: D6 = RX (← TX0 do Mega) | D7 = TX (→ RX0 do Mega)
-//  Baud rate: 38400
-//
-//  O que este sketch faz:
-//   1. Quando receber "PING:<n>" do Mega, responde com "PONG:<n>".
-//   2. A cada 3 segundos envia um pacote MAKITA: fake para testar
-//      se o Arduino consegue processar o formato real.
-//   3. Loga tudo no Serial Monitor via porta USB (115200).
+//  TESTE DIAGNÓSTICO COMPLETO — ESP8266
+//  Pinos: D6 = RX (← TX0 Mega) | D7 = TX (→ RX0 Mega)
+//         D5 = RESET do Mega
+//  Velocidade com Mega: 115200 baud
+//  Velocidade USB Monitor: 115200 baud
 // =============================================================
 
 #include <SoftwareSerial.h>
-
-#define GAME_BAUD_RATE 38400
-
-// D6 = RX (recebe do Mega TX0)  |  D7 = TX (envia para Mega RX0)
-SoftwareSerial megaSerial(D6, D7);
-
-unsigned long ultimoPacoteFake = 0;
-const unsigned long intervaloPacote = 3000; // ms
-uint32_t contadorPong = 0;
-
-// Valores fake incrementais para simular o jogo
-double fakeMakitas    = 1000.0;
-double fakeMps        = 12.5;
-double fakeClickPower = 5.0;
-int    fakeTotalOwned = 3;
-
-void setup() {
-  // Serial USB: logs para o Serial Monitor do computador
-  Serial.begin(115200);
-  Serial.println(F("=== ESP8266: Teste Serial Mega ==="));
-  Serial.println(F("SoftwareSerial em D6(RX)/D7(TX) @ 38400 baud"));
-  Serial.println(F("Aguardando PING do Arduino Mega..."));
-
-  // SoftwareSerial: canal com o Arduino Mega
-  megaSerial.begin(GAME_BAUD_RATE);
-
-  pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, HIGH); // LED onboard é ativo em LOW no ESP
+extern "C" {
+  #include "user_interface.h"
 }
 
-// Buffer para recepção não-bloqueante
-char rxBuf[64];
-uint8_t rxIdx = 0;
+#define MEGA_RESET_PIN D5
+#define BAUD_BOOT 115200
+#define BAUD_ALT 57600
 
-void processarMensagem(const char* msg) {
-  Serial.print(F("[Mega→ESP] "));
-  Serial.println(msg);
+SoftwareSerial megaSerial(D6, D7);
 
-  // Responde PING com PONG
-  if (strncmp(msg, "PING:", 5) == 0) {
-    contadorPong++;
-    const char* num = msg + 5; // parte numérica após "PING:"
-    String resposta = "PONG:" + String(num);
-    megaSerial.println(resposta);
+unsigned long ultimoEnvio = 0;
+uint32_t contador = 0;
 
-    Serial.print(F("[ESP→Mega] "));
-    Serial.println(resposta);
+void resetarMega() {
+  Serial.println(F("\n[TESTE-RESET] Puxando D5 para LOW por 100ms..."));
+  digitalWrite(MEGA_RESET_PIN, LOW);
+  pinMode(MEGA_RESET_PIN, OUTPUT);
+  delay(100);
+  pinMode(MEGA_RESET_PIN, INPUT); // Solta em Hi-Z
+  Serial.println(F("[TESTE-RESET] D5 solto (Hi-Z). O Mega deve ter reiniciado!"));
+}
 
-    // Pisca LED onboard como feedback visual
-    digitalWrite(LED_BUILTIN, LOW);
-    delay(50);
-    digitalWrite(LED_BUILTIN, HIGH);
+void testarBootloader(uint32_t baud) {
+  Serial.printf("\n=== TESTE BOOTLOADER STK500v2 @ %d BAUD ===\n", baud);
+  megaSerial.begin(baud);
+  delay(10);
+  while (megaSerial.available()) megaSerial.read();
+
+  // Reseta o Mega
+  digitalWrite(MEGA_RESET_PIN, LOW);
+  pinMode(MEGA_RESET_PIN, OUTPUT);
+  delay(100);
+  pinMode(MEGA_RESET_PIN, INPUT);
+  delay(80); // Aguarda bootloader acordar UART0
+
+  while (megaSerial.available()) megaSerial.read();
+
+  // CMD_SIGN_ON: 0x1B 0x01 0x00 0x01 0x0E 0x01 0x14
+  uint8_t signOn[] = { 0x1B, 0x01, 0x00, 0x01, 0x0E, 0x01, 0x14 };
+  bool respondeu = false;
+
+  for (int tentativa = 1; tentativa <= 8; tentativa++) {
+    while (megaSerial.available()) megaSerial.read();
+    megaSerial.write(signOn, sizeof(signOn));
+    megaSerial.flush();
+
+    unsigned long start = millis();
+    Serial.printf("  Tentativa %d: aguardando resposta... ", tentativa);
+
+    int bytesRecebidos = 0;
+    uint8_t buf[32];
+    while (millis() - start < 150) {
+      while (megaSerial.available() > 0) {
+        uint8_t c = megaSerial.read();
+        if (bytesRecebidos < sizeof(buf)) buf[bytesRecebidos] = c;
+        bytesRecebidos++;
+      }
+      delay(1);
+    }
+
+    if (bytesRecebidos > 0) {
+      respondeu = true;
+      Serial.printf("SUCESSO! Recebeu %d bytes: [ ", bytesRecebidos);
+      for (int i = 0; i < min(bytesRecebidos, (int)sizeof(buf)); i++) {
+        Serial.printf("0x%02X ", buf[i]);
+      }
+      Serial.println("]");
+      break;
+    } else {
+      Serial.println("0 bytes.");
+    }
+    delay(20);
   }
 
-  // Trata CLICK vindo do Mega (útil para testar o canal reverso)
-  if (strcmp(msg, "CLICK") == 0) {
-    fakeMakitas += fakeClickPower;
-    Serial.println(F("  → CLICK recebido! Makitas incrementadas."));
+  if (respondeu) {
+    Serial.printf(">>> BOOTLOADER RESPONDEU EM %d BAUD! <<<\n", baud);
+  } else {
+    Serial.printf(">>> Nenhum sinal do bootloader em %d baud. <<<\n", baud);
   }
+}
+
+void setup() {
+  system_update_cpu_freq(160); // 160MHz
+  Serial.begin(115200);
+  delay(500);
+
+  Serial.println(F("\n============================================="));
+  Serial.println(F("   DIAGNÓSTICO SERIAL & BOOTLOADER ESP-MEGA   "));
+  Serial.println(F("============================================="));
+  Serial.println(F("Comandos no Serial Monitor:"));
+  Serial.println(F("  '1' -> Testar Bootloader a 115200 baud"));
+  Serial.println(F("  '2' -> Testar Bootloader a 57600 baud"));
+  Serial.println(F("  'r' -> Resetar o Mega manualmente via D5"));
+  Serial.println(F("  'p' -> Enviar PING de texto a 115200"));
+  Serial.println(F("  't' -> Testar nível físico do D7 (LOW/HIGH por 2s)"));
+  Serial.println(F("=============================================\n"));
+
+  pinMode(MEGA_RESET_PIN, INPUT); // Comeca em Hi-Z
+  megaSerial.begin(BAUD_BOOT);
+  Serial.println(F("SoftwareSerial D6(RX)/D7(TX) iniciado a 115200 baud."));
+  Serial.println(F("Modo escuta ativo. Qualquer dado recebido do Mega sera exibido abaixo:\n"));
 }
 
 void loop() {
-  unsigned long now = millis();
-
-  // ── Leitura não-bloqueante da SoftwareSerial ─────────────────
-  while (megaSerial.available() > 0) {
-    char c = (char)megaSerial.read();
-    if (c == '\n' || c == '\r') {
-      if (rxIdx > 0) {
-        rxBuf[rxIdx] = '\0';
-        processarMensagem(rxBuf);
-        rxIdx = 0;
+  // 1. Le tudo que o Mega envia e exibe no Serial Monitor com detalhes
+  if (megaSerial.available() > 0) {
+    Serial.print(F("[MEGA->ESP]: "));
+    while (megaSerial.available() > 0) {
+      char c = (char)megaSerial.read();
+      if (c >= 32 && c <= 126) {
+        Serial.print(c);
+      } else if (c == '\n') {
+        Serial.print(F("\\n\n"));
+      } else if (c == '\r') {
+        Serial.print(F("\\r"));
+      } else {
+        Serial.printf("[0x%02X]", (uint8_t)c);
       }
-    } else if (rxIdx < sizeof(rxBuf) - 1 && c >= 32 && c <= 126) {
-      rxBuf[rxIdx++] = c;
-    } else {
-      rxIdx = 0; // descarta buffer corrompido
+      delay(1);
     }
   }
 
-  // ── Envia pacote MAKITA: fake periodicamente ─────────────────
-  if (now - ultimoPacoteFake >= intervaloPacote) {
-    ultimoPacoteFake = now;
-
-    // Simula crescimento do jogo
-    fakeMakitas    += fakeMps * (intervaloPacote / 1000.0);
-    fakeTotalOwned  = (fakeTotalOwned < 20) ? fakeTotalOwned + 1 : fakeTotalOwned;
-
-    // Formato exato igual ao código real: MAKITA:<saldo>,<mps>,<clickPower>,<totalOwned>
-    String pacote = "MAKITA:" +
-                    String(fakeMakitas, 2) + "," +
-                    String(fakeMps, 2)     + "," +
-                    String(fakeClickPower, 2) + "," +
-                    String(fakeTotalOwned);
-
-    megaSerial.println(pacote);
-
-    Serial.print(F("[ESP→Mega] "));
-    Serial.println(pacote);
-  }
-
-  // ── Repassa digitação do Serial Monitor para o Mega ──────────
-  // (Útil para enviar comandos manuais durante o teste)
-  while (Serial.available() > 0) {
-    char c = Serial.read();
-    megaSerial.write(c);
-    Serial.write(c); // echo local
+  // 2. Comandos do usuario digitados no Serial Monitor
+  if (Serial.available() > 0) {
+    char cmd = Serial.read();
+    if (cmd == '1') {
+      testarBootloader(115200);
+      megaSerial.begin(BAUD_BOOT);
+    } else if (cmd == '2') {
+      testarBootloader(57600);
+      megaSerial.begin(BAUD_BOOT);
+    } else if (cmd == 'r' || cmd == 'R') {
+      resetarMega();
+    } else if (cmd == 'p' || cmd == 'P') {
+      contador++;
+      String p = "PING_ESP:" + String(contador);
+      megaSerial.println(p);
+      Serial.println("[ESP->MEGA]: " + p);
+    } else if (cmd == 't' || cmd == 'T') {
+      Serial.println(F("\n[TESTE] Testando nível elétrico em D7, D1 e D2 simultaneamente..."));
+      megaSerial.end();
+      pinMode(D7, OUTPUT);
+      pinMode(D1, OUTPUT);
+      pinMode(D2, OUTPUT);
+      for (int i = 1; i <= 4; i++) {
+        Serial.printf("  Ciclo %d: D7, D1 e D2 em LOW (0V) por 2 segundos... (Olhe o LCD do Mega!)\n", i);
+        digitalWrite(D7, LOW);
+        digitalWrite(D1, LOW);
+        digitalWrite(D2, LOW);
+        delay(2000);
+        Serial.printf("  Ciclo %d: D7, D1 e D2 em HIGH (3.3V) por 2 segundos... (Olhe o LCD do Mega!)\n", i);
+        digitalWrite(D7, HIGH);
+        digitalWrite(D1, HIGH);
+        digitalWrite(D2, HIGH);
+        delay(2000);
+      }
+      megaSerial.begin(BAUD_BOOT);
+      Serial.println(F("[TESTE] Teste concluido! megaSerial restaurada.\n"));
+    }
   }
 }
