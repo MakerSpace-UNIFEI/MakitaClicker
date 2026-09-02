@@ -41,8 +41,10 @@
         .game {
             width: 100%;
             height: 100vh;
+            max-height: 100vh;
             display: grid;
-            grid-template-columns: 300px 1fr 260px;
+            grid-template-columns: 300px minmax(0, 1fr) 260px;
+            grid-template-rows: 100vh;
             overflow: hidden;
         }
 
@@ -74,6 +76,9 @@
             border-right: 1px solid var(--panel-edge);
             display: flex;
             flex-direction: column;
+            height: 100%;
+            max-height: 100vh;
+            overflow: hidden;
         }
 
         .counter-head {
@@ -228,6 +233,11 @@
             background: var(--bg-void);
             display: flex;
             flex-direction: column;
+            height: 100%;
+            max-height: 100vh;
+            min-height: 0;
+            min-width: 0;
+            overflow: hidden;
         }
 
         .center-nav {
@@ -271,8 +281,10 @@
 
         .center-body {
             flex: 1;
+            min-height: 0;
             position: relative;
             overflow-y: auto;
+            overflow-x: hidden;
             display: flex;
             flex-direction: column;
         }
@@ -481,6 +493,9 @@
             border-left: 1px solid var(--panel-edge);
             display: flex;
             flex-direction: column;
+            height: 100%;
+            max-height: 100vh;
+            min-height: 0;
             overflow: hidden;
         }
 
@@ -558,7 +573,9 @@
             flex-direction: column;
             gap: .55rem;
             flex: 1;
+            min-height: 0;
             overflow-y: auto;
+            overflow-x: hidden;
         }
 
         .shop-item {
@@ -631,37 +648,56 @@
 
         @media (max-width: 760px) {
             html, body {
-                height: auto;
-                min-height: 100vh;
-                overflow-x: hidden;
-                overflow-y: auto;
+                height: auto !important;
+                min-height: 100vh !important;
+                overflow-x: hidden !important;
+                overflow-y: auto !important;
             }
             .game {
-                height: auto;
-                min-height: 100vh;
-                grid-template-columns: 1fr;
-                overflow: visible;
+                height: auto !important;
+                max-height: none !important;
+                display: flex !important;
+                flex-direction: column !important;
+                overflow: visible !important;
             }
             .col-counter {
-                min-height: 320px;
+                height: auto !important;
+                max-height: none !important;
+                overflow: visible !important;
                 border-right: none;
                 border-left: none;
                 border-bottom: 2px solid var(--panel-edge);
+                order: 1;
             }
             .click-area {
                 min-height: 250px;
                 padding: 1.5rem 0;
             }
-            .col-center, .col-shop {
+            .col-center {
+                height: auto !important;
+                max-height: none !important;
+                overflow: visible !important;
                 border-right: none;
                 border-left: none;
-                border-bottom: 1px solid var(--panel-edge);
+                border-bottom: 2px solid var(--panel-edge);
+                order: 2;
             }
-            .col-center {
-                min-height: 380px;
+            .center-body {
+                max-height: 60vh;
+                overflow-y: auto !important;
             }
             .col-shop {
-                min-height: 420px;
+                height: auto !important;
+                max-height: none !important;
+                overflow: visible !important;
+                border-right: none;
+                border-left: none;
+                border-bottom: none;
+                order: 3;
+            }
+            .shop-list {
+                max-height: 60vh;
+                overflow-y: auto !important;
             }
         }
 
@@ -685,8 +721,8 @@
         </div>
         <div class="click-area" id="clickArea">
             <button class="clicker" id="makitaBtn" aria-label="Fabricar makita">
-                <img class="clicker__img" src="/images/makitaCoracao.png" alt="Makita" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
-                <span class="clicker__fallback" style="display:none; font-size: 4rem; user-select: none;">🪚</span>
+                <img class="clicker__img" src="/makitaCoracao.png" alt="Makita" onerror="this.src='/images/makitaCoracao.png'; this.onerror=function(){this.style.display='none'; document.getElementById('makitaFallbackIcon').style.display='block';}">
+                <span id="makitaFallbackIcon" class="clicker__fallback" style="display:none; font-size: 4rem; user-select: none;">🪚</span>
             </button>
             <p class="click-hint">⚡ Clique para fabricar</p>
         </div>
@@ -1496,7 +1532,7 @@
 
         const img = document.createElement('img');
         img.className = 'flying-makita';
-        img.src = '/images/makitaCoracao.png';
+        img.src = '/makitaCoracao.png';
         img.alt = '';
 
         const size = 1.8 + Math.random() * 1.6;
