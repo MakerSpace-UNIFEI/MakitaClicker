@@ -196,12 +196,17 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
     return false;
   }
 
+  // Para o WiFi para eliminar interferência de interrupções no SoftwareSerial a 115200 baud
+  webSocket.disconnect();
+  WiFi.forceSleepBegin();
+  delay(200); // garante que o modem WiFi está completamente silenciado
+
   // Pulsa o RESET do Mega para ativar o bootloader STK500v2
   pinMode(MEGA_RESET_PIN, OUTPUT);
   digitalWrite(MEGA_RESET_PIN, LOW);
   delay(10);                      // pulso mínimo confiável
   pinMode(MEGA_RESET_PIN, INPUT); // Alta impedância segura
-  delay(250);                     // aguarda o bootloader STK500v2 inicializar completamente
+  delay(400);                     // ATmega2560 bootloader leva ~120ms; margem ampla
 
   megaSerial.begin(BOOTLOADER_BAUD_RATE);
   delay(50);                      // estabiliza a serial antes de limpar o buffer
@@ -214,8 +219,8 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
   // 1. Handshake (CMD_SIGN_ON)
   bool syncOk = false;
   uint8_t signOnCmd[] = { 0x01 };
-  for (int attempt = 0; attempt < 10; attempt++) {
-    if (sendStk500v2(megaSerial, signOnCmd, sizeof(signOnCmd), resp, respLen, seq, 400)) {
+  for (int attempt = 0; attempt < 15; attempt++) {
+    if (sendStk500v2(megaSerial, signOnCmd, sizeof(signOnCmd), resp, respLen, seq, 1500)) {
       if (respLen >= 2 && resp[0] == 0x01 && resp[1] == 0x00) {
         syncOk = true;
         break;
@@ -229,6 +234,9 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
     f.close();
     LittleFS.remove("/mega_temp.bin");
     megaSerial.begin(GAME_BAUD_RATE);
+    WiFi.forceSleepWake();
+    delay(100);
+    WiFi.begin(ssid, password);
     return false;
   }
   Serial.println("[OTA-MEGA] Handshake STK500v2 OK!");
@@ -258,6 +266,9 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
       f.close();
       LittleFS.remove("/mega_temp.bin");
       megaSerial.begin(GAME_BAUD_RATE);
+      WiFi.forceSleepWake();
+      delay(100);
+      WiFi.begin(ssid, password);
       return false;
     }
 
@@ -311,6 +322,9 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
       f.close();
       LittleFS.remove("/mega_temp.bin");
       megaSerial.begin(GAME_BAUD_RATE);
+      WiFi.forceSleepWake();
+      delay(100);
+      WiFi.begin(ssid, password);
       return false;
     }
 
@@ -338,6 +352,11 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
   delay(3000);  // Wire + LCD + SoftwareSerial precisam de até 3s para inicializar
 
   megaSerial.begin(GAME_BAUD_RATE);
+
+  // Reestabelece WiFi e WebSocket após programação
+  WiFi.forceSleepWake();
+  delay(100);
+  WiFi.begin(ssid, password);
 
   Serial.println("[OTA-MEGA] Arduino Mega regravado com sucesso!");
   return true;
