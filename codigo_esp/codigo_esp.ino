@@ -86,10 +86,17 @@ bool sendStk500v2(Stream &s, const uint8_t *payload, uint16_t len, uint8_t *resp
   s.write(checksum);
   s.flush();
 
-  // Aguarda resposta sincronizando no 0x1B inicial (descarta ruídos eventuais)
+  // Aguarda resposta sincronizando no 0x1B inicial
   unsigned long start = millis();
+  int discarded = 0;
+  uint8_t discBuf[8];
+
   while (millis() - start < timeoutMs) {
-    while (s.available() && s.peek() != 0x1B) s.read();
+    while (s.available() && s.peek() != 0x1B) {
+      uint8_t b = s.read();
+      if (discarded < (int)sizeof(discBuf)) discBuf[discarded] = b;
+      discarded++;
+    }
     if (s.available() >= 5 && s.peek() == 0x1B) break;
     delay(1);
     yield();
@@ -97,10 +104,14 @@ bool sendStk500v2(Stream &s, const uint8_t *payload, uint16_t len, uint8_t *resp
 
   if (s.available() < 5 || s.read() != 0x1B) {
     int avail = s.available();
-    Serial.printf("[STK-DBG] Timeout/No 0x1B (avail=%d", avail);
-    // Mostra até 4 bytes recebidos para diagnóstico
+    Serial.printf("[STK-DBG] Timeout/No 0x1B (avail=%d disc=%d", avail, discarded);
+    if (discarded > 0) {
+      Serial.print(" disc=[");
+      for (int i = 0; i < min(discarded, (int)sizeof(discBuf)); i++) Serial.printf("0x%02X ", discBuf[i]);
+      Serial.print("]");
+    }
     if (avail > 0) {
-      Serial.print(" bytes=[");
+      Serial.print(" buf=[");
       int show = min(avail, 4);
       for (int i = 0; i < show; i++) Serial.printf("0x%02X ", s.read());
       Serial.print("]");
@@ -210,35 +221,67 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
     return false;
   }
 
-  // Pulsa o RESET do Mega para ativar o bootloader STK500v2
-  // Pulso de 100ms descarrega com segurança o capacitor de reset do Mega
-  pinMode(MEGA_RESET_PIN, OUTPUT);
-  digitalWrite(MEGA_RESET_PIN, LOW);
-  delay(100);
-  pinMode(MEGA_RESET_PIN, INPUT); // Alta impedância segura (Hi-Z)
-  delay(90);                      // 90ms: tempo exato para o bootloader ATmega2560 inicializar a UART0
-
+  // 1. Abre a serial a 115200 ANTES do reset para armar a recepção
   megaSerial.begin(BOOTLOADER_BAUD_RATE);
+  delay(10);
   while (megaSerial.available()) megaSerial.read();
 
-  // Handshake imediato (CMD_SIGN_ON) dentro da janela de escuta do bootloader (~350ms)
+  // Pulso de reset no Mega
+  digitalWrite(MEGA_RESET_PIN, LOW);
+  pinMode(MEGA_RESET_PIN, OUTPUT);
+  delay(100);
+  pinMode(MEGA_RESET_PIN, INPUT); // Solta em Hi-Z
+  delay(80);                      // 80ms: bootloader inicializa a UART0
+
+  while (megaSerial.available()) megaSerial.read();
+
+  // Handshake imediato (CMD_SIGN_ON) dentro da janela de escuta do bootloader
   bool syncOk = false;
   uint8_t signOnCmd[] = { 0x01 };
   uint16_t respLen = 0;
   uint8_t resp[64];
   uint8_t seq = 1;
 
-  for (int attempt = 0; attempt < 15 && !syncOk; attempt++) {
+  Serial.println("[OTA-MEGA] Tentando handshake STK500v2 @ 115200 baud...");
+  for (int attempt = 0; attempt < 12 && !syncOk; attempt++) {
     ESP.wdtFeed();
     yield();
-    if (sendStk500v2(megaSerial, signOnCmd, sizeof(signOnCmd), resp, respLen, seq, 200)) {
+    if (sendStk500v2(megaSerial, signOnCmd, sizeof(signOnCmd), resp, respLen, seq, 150)) {
       if (respLen >= 2 && resp[0] == 0x01 && resp[1] == 0x00) {
         syncOk = true;
-        Serial.println("[OTA-MEGA] Handshake STK500v2 OK!");
+        Serial.println("[OTA-MEGA] Handshake STK500v2 OK @ 115200!");
         break;
       }
     }
     delay(20);
+  }
+
+  // Se não respondeu a 115200, reseta o Mega novamente e tenta 57600 baud (bootloader de clones)
+  if (!syncOk) {
+    Serial.println("[OTA-MEGA] Sem resposta a 115200. Novo reset para tentar 57600 baud...");
+    megaSerial.begin(57600);
+    delay(10);
+    while (megaSerial.available()) megaSerial.read();
+
+    digitalWrite(MEGA_RESET_PIN, LOW);
+    pinMode(MEGA_RESET_PIN, OUTPUT);
+    delay(100);
+    pinMode(MEGA_RESET_PIN, INPUT);
+    delay(80);
+    while (megaSerial.available()) megaSerial.read();
+
+    for (int attempt = 0; attempt < 12 && !syncOk; attempt++) {
+      ESP.wdtFeed();
+      yield();
+      if (sendStk500v2(megaSerial, signOnCmd, sizeof(signOnCmd), resp, respLen, seq, 150)) {
+        if (respLen >= 2 && resp[0] == 0x01 && resp[1] == 0x00) {
+          syncOk = true;
+          Serial.println("[OTA-MEGA] Handshake STK500v2 OK @ 57600!");
+          break;
+        }
+      }
+      delay(20);
+    }
   }
 
   if (!syncOk) {
