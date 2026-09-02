@@ -65,7 +65,7 @@ void resetMega() {
 }
 
 // ===== ROTINA STK500v2 PARA GRAVAÇÃO DO ARDUINO MEGA =====
-bool sendStk500v2(Stream &s, const uint8_t *payload, uint16_t len, uint8_t *resp, uint16_t &respLen, uint8_t seqNum = 1, uint32_t timeoutMs = 2000) {
+bool sendStk500v2(Stream &s, const uint8_t *payload, uint16_t len, uint8_t *resp, uint16_t &respLen, uint8_t seqNum = 1, uint32_t timeoutMs = 600) {
   // Limpa qualquer byte residual na serial antes de enviar
   while (s.available()) s.read();
   if (resp) memset(resp, 0xFF, 64);
@@ -81,10 +81,14 @@ bool sendStk500v2(Stream &s, const uint8_t *payload, uint16_t len, uint8_t *resp
   for (int i = 0; i < 5; i++) checksum ^= header[i];
   for (uint16_t i = 0; i < len; i++) checksum ^= payload[i];
 
+  yield();
+  ESP.wdtFeed();
+  noInterrupts(); // Garante envio sem jitter de interrupções de Wi-Fi (SoftwareSerial a 115200 baud)
   s.write(header, 5);
   s.write(payload, len);
   s.write(checksum);
   s.flush();
+  interrupts();
 
   // Aguarda resposta sincronizando no 0x1B inicial
   unsigned long start = millis();
@@ -347,8 +351,8 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
         (uint8_t)(wordAddr & 0xFF)
       };
 
-      if (!sendStk500v2(megaSerial, loadAddrCmd, sizeof(loadAddrCmd), resp, respLen, 1, 1000) || resp[1] != 0x00) {
-        delay(15);
+      if (!sendStk500v2(megaSerial, loadAddrCmd, sizeof(loadAddrCmd), resp, respLen, 1, 600) || resp[1] != 0x00) {
+        delay(5);
         continue;
       }
 
@@ -365,11 +369,11 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
       progPayload[9] = 0x00;
       memcpy(&progPayload[10], pageBuffer, PAGE_SIZE);
 
-      if (sendStk500v2(megaSerial, progPayload, sizeof(progPayload), resp, respLen, 1, 2000) && resp[1] == 0x00) {
+      if (sendStk500v2(megaSerial, progPayload, sizeof(progPayload), resp, respLen, 1, 600) && resp[1] == 0x00) {
         pageOk = true;
         break;
       }
-      delay(20);
+      delay(5);
     }
 
     if (!pageOk) {
