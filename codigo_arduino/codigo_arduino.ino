@@ -4,18 +4,21 @@
 
 #define GAME_BAUD_RATE 38400
 
-// Configuração dos Pinos do Botão Físico (Break-Before-Make)
-const int PIN_BOTAO_NO = 7; // Normal Aberto (NO) -> Conectado ao pino 7 (fecha no GND ao pressionar)
-const int PIN_BOTAO_NC = 6; // Normal Fechado (NC) -> Conectado ao pino 6 (fecha no GND ao soltar)
+// Configuração de 2 Entradas de Clique Separadas e Independentes
+const int PIN_BOTAO_1 = 7; // Input 1 (ex: Pino 7 / Normal Aberto)
+const int PIN_BOTAO_2 = 6; // Input 2 (ex: Pino 6 / Normal Fechado)
 
 // Ponteiro dinâmico para o LCD (permite auto-detecção de endereço I2C: 0x27, 0x3F, etc.)
 LiquidCrystal_I2C* lcd = nullptr;
 
-// Controle Ultra-Rápido do Botão (SR Latch mecânico sem delay)
-bool botaoArmado = true;
-unsigned long ultimoCliqueTempo = 0;
-const unsigned long JANELA_DUPLO_CLIQUE = 350; // ms para detecção de clique duplo
-bool cliqueDuploAtivo = false;
+// Detecção de borda independente para cada entrada (resposta instantânea)
+bool estadoAnterior1 = HIGH;
+unsigned long ultimoTempo1 = 0;
+
+bool estadoAnterior2 = HIGH;
+unsigned long ultimoTempo2 = 0;
+
+const unsigned long DEBOUNCE_MS = 12; // Filtro rápido de 12ms apenas contra ruído mecânico
 
 // Controle de atualização desacoplada do LCD (elimina latência I2C)
 bool precisaAtualizarLCD = false;
@@ -232,11 +235,7 @@ void atualizarLCD() {
 
   // Linha 3: Feedback de Clique ou Status Rotativo com IP e Meta 99B
   if (clickAtivo) {
-    if (cliqueDuploAtivo) {
-      printLinhaFormatada(3, ">> CLIQUE DUPLO! <<");
-    } else {
-      printLinhaFormatada(3, ">> CORTE EFETUADO! <<");
-    }
+    printLinhaFormatada(3, ">> CORTE EFETUADO! <<");
   } else {
     if (modoInfoLinha3 == 0) {
       printLinhaFormatada(3, "IP: " + espIP);
@@ -339,8 +338,8 @@ void processarSerialRecebida() {
 }
 
 void setup() {
-  pinMode(PIN_BOTAO_NO, INPUT_PULLUP);
-  pinMode(PIN_BOTAO_NC, INPUT_PULLUP);
+  pinMode(PIN_BOTAO_1, INPUT_PULLUP);
+  pinMode(PIN_BOTAO_2, INPUT_PULLUP);
 
   // Comunicação Serial0 com ESP8266 a 38400 baud (estável e sem perda de pacotes)
   Serial.begin(GAME_BAUD_RATE);
@@ -380,34 +379,29 @@ void setup() {
 void loop() {
   unsigned long now = millis();
 
-  // 1. Leitura Ultra-Rápida do Botão Físico com NO (Pino 7) e NC (Pino 6)
-  // Break-Before-Make mecânico: zero delay de debounce, resposta instantânea em microssegundos
-  bool noPress = (digitalRead(PIN_BOTAO_NO) == LOW); // LOW quando pressionado
-  bool ncSolto = (digitalRead(PIN_BOTAO_NC) == LOW); // LOW quando solto (em repouso)
-
-  // Re-arma assim que o contato NC fecha no repouso (ou fallback de 15ms se NC não conectado)
-  if (ncSolto) {
-    botaoArmado = true;
-  } else if (!noPress && (now - ultimoCliqueTempo > 15)) {
-    // Fallback de segurança caso o usuário ainda não tenha conectado o pino 6
-    botaoArmado = true;
-  }
-
-  // Disparo imediato assim que o contato NO fecha
-  if (noPress && botaoArmado) {
-    botaoArmado = false; // Trava o gatilho até o botão ser solto
-
-    bool isDouble = (now - ultimoCliqueTempo <= JANELA_DUPLO_CLIQUE);
-    ultimoCliqueTempo = now;
-    cliqueDuploAtivo = isDouble;
-
-    // Envia o clique imediatamente para a ESP
+  // 1. Leitura de 2 Entradas de Clique Separadas e Independentes (Pino 7 e Pino 6)
+  // Cada entrada dispara instantaneamente ao fechar no GND (HIGH -> LOW)
+  bool l1 = digitalRead(PIN_BOTAO_1);
+  if (l1 == LOW && estadoAnterior1 == HIGH && (now - ultimoTempo1 > DEBOUNCE_MS)) {
+    ultimoTempo1 = now;
     Serial.println("CLICK");
     makitasGlobal += clickPowerGlobal;
     ultimoClickVisual = now;
     frameAnimacao = (frameAnimacao + 1) % 4;
     precisaAtualizarLCD = true;
   }
+  estadoAnterior1 = l1;
+
+  bool l2 = digitalRead(PIN_BOTAO_2);
+  if (l2 == LOW && estadoAnterior2 == HIGH && (now - ultimoTempo2 > DEBOUNCE_MS)) {
+    ultimoTempo2 = now;
+    Serial.println("CLICK");
+    makitasGlobal += clickPowerGlobal;
+    ultimoClickVisual = now;
+    frameAnimacao = (frameAnimacao + 1) % 4;
+    precisaAtualizarLCD = true;
+  }
+  estadoAnterior2 = l2;
 
   // 2. Processa pacotes seriais do ESP8266 de forma 100% não-bloqueante
   processarSerialRecebida();
