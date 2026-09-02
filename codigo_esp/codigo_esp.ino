@@ -96,7 +96,16 @@ bool sendStk500v2(Stream &s, const uint8_t *payload, uint16_t len, uint8_t *resp
   }
 
   if (s.available() < 5 || s.read() != 0x1B) {
-    Serial.printf("[STK-DBG] Timeout/No 0x1B (avail=%d)\n", s.available());
+    int avail = s.available();
+    Serial.printf("[STK-DBG] Timeout/No 0x1B (avail=%d", avail);
+    // Mostra até 4 bytes recebidos para diagnóstico
+    if (avail > 0) {
+      Serial.print(" bytes=[");
+      int show = min(avail, 4);
+      for (int i = 0; i < show; i++) Serial.printf("0x%02X ", s.read());
+      Serial.print("]");
+    }
+    Serial.println(")");
     return false;
   }
   uint8_t rSeq = s.read();
