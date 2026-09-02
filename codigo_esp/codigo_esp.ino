@@ -47,6 +47,9 @@ const char* hostName = "esp-painel";
 ESP8266WebServer server(80);
 WebSocketsServer webSocket = WebSocketsServer(81);
 
+#define GAME_BAUD_RATE 38400
+#define BOOTLOADER_BAUD_RATE 115200
+
 // D6 = RX (Mega TX0 / Pino 1), D7 = TX (Mega RX0 / Pino 0)
 SoftwareSerial megaSerial(D6, D7);
 
@@ -57,7 +60,7 @@ void resetMega() {
   digitalWrite(MEGA_RESET_PIN, LOW);
   delay(60);
   pinMode(MEGA_RESET_PIN, INPUT); // Retorna imediatamente para Hi-Z (alta impedancia)
-  delay(150); // Aguarda boot do Mega
+  delay(1500); // Aguarda bootloader e inicializacao do Mega
   Serial.println("[MEGA] Reset concluido.");
 }
 
@@ -196,13 +199,13 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
   // Pulsa o RESET do Mega para ativar o bootloader STK500v2
   pinMode(MEGA_RESET_PIN, OUTPUT);
   digitalWrite(MEGA_RESET_PIN, LOW);
-  delay(100);
+  delay(10);                      // pulso mínimo confiável
   pinMode(MEGA_RESET_PIN, INPUT); // Alta impedância segura
-  delay(100);
+  delay(250);                     // aguarda o bootloader STK500v2 inicializar completamente
 
-  megaSerial.begin(115200);
+  megaSerial.begin(BOOTLOADER_BAUD_RATE);
+  delay(50);                      // estabiliza a serial antes de limpar o buffer
   while (megaSerial.available()) megaSerial.read();
-  delay(100);
 
   uint8_t seq = 1;
   uint8_t resp[64];
@@ -225,6 +228,7 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
     Serial.println("[OTA-MEGA] Erro: Arduino Mega nao respondeu ao STK500v2.");
     f.close();
     LittleFS.remove("/mega_temp.bin");
+    megaSerial.begin(GAME_BAUD_RATE);
     return false;
   }
   Serial.println("[OTA-MEGA] Handshake STK500v2 OK!");
@@ -245,6 +249,17 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
 
     uint16_t toRead = min((uint32_t)PAGE_SIZE, (uint32_t)(written - currentAddr));
     size_t bytesRead = f.read(pageBuffer, toRead);
+
+    // Aborta se a leitura do LittleFS retornar menos bytes que o esperado (falha de I/O)
+    if (bytesRead != toRead) {
+      Serial.printf("[OTA-MEGA] Erro: leitura LittleFS incompleta (%d/%d bytes), abortando.\n", bytesRead, toRead);
+      uint8_t leaveProgErr[] = { 0x11, 0x01, 0x01 };
+      sendStk500v2(megaSerial, leaveProgErr, sizeof(leaveProgErr), resp, respLen, seq, 1000);
+      f.close();
+      LittleFS.remove("/mega_temp.bin");
+      megaSerial.begin(GAME_BAUD_RATE);
+      return false;
+    }
 
     while (bytesRead < PAGE_SIZE) {
       pageBuffer[bytesRead++] = 0xFF;
@@ -290,8 +305,12 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
 
     if (!pageOk) {
       Serial.printf("[OTA-MEGA] Erro gravando pagina em 0x%X (status 0x%02X)\n", currentAddr, resp[1]);
+      // Envia Leave Prog Mode para o Mega não ficar preso no bootloader
+      uint8_t leaveProg[] = { 0x11, 0x01, 0x01 };
+      sendStk500v2(megaSerial, leaveProg, sizeof(leaveProg), resp, respLen, seq, 1000);
       f.close();
       LittleFS.remove("/mega_temp.bin");
+      megaSerial.begin(GAME_BAUD_RATE);
       return false;
     }
 
@@ -311,12 +330,14 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
   f.close();
   LittleFS.remove("/mega_temp.bin");
 
-  // Reinicia o Mega para rodar o novo código e aguarda boot
+  // Reinicia o Mega para rodar o novo código e aguarda boot completo
   pinMode(MEGA_RESET_PIN, OUTPUT);
   digitalWrite(MEGA_RESET_PIN, LOW);
-  delay(100);
+  delay(10);
   pinMode(MEGA_RESET_PIN, INPUT);
-  delay(1500);
+  delay(3000);  // Wire + LCD + SoftwareSerial precisam de até 3s para inicializar
+
+  megaSerial.begin(GAME_BAUD_RATE);
 
   Serial.println("[OTA-MEGA] Arduino Mega regravado com sucesso!");
   return true;
@@ -449,7 +470,7 @@ String getGameStateJSON() {
   json += "\"perm_disco_diamante\":" + String(permDiscoDiamante ? "true" : "false") + ",";
   json += "\"perm_motor_brushless\":" + String(permMotorBrushless ? "true" : "false") + ",";
   json += "\"perm_empunhadura\":" + String(permEmpunhadura ? "true" : "false") + ",";
-  json += "\"perm_bateria_lítio\":" + String(permBateriaLitio ? "true" : "false") + ",";
+  json += "\"perm_bateria_litio\":" + String(permBateriaLitio ? "true" : "false") + ",";
   json += "\"perm_ia_maker\":" + String(permIaMaker ? "true" : "false") + ",";
   json += "\"perm_refrigeracao\":" + String(permRefrigeracao ? "true" : "false") + ",";
   json += "\"perm_titanio\":" + String(permTitanio ? "true" : "false") + ",";
@@ -544,192 +565,20 @@ uint8_t calcChecksum(const EEPROMState &s) {
 }
 
 void saveEEPROM() {
-  EEPROMState s;
-  s.magic = EEPROM_MAGIC;
-  s.makitas = makitas;
-  for (int i = 0; i < NUM_UPGRADES; i++) {
-    s.owned[i] = (uint8_t)ownedUpgrades[i];
-  }
-  s.perms = 0;
-  if (permLubrificante)      s.perms |= ((uint32_t)1 << 0);
-  if (permDiscoDiamante)     s.perms |= ((uint32_t)1 << 1);
-  if (permMotorBrushless)    s.perms |= ((uint32_t)1 << 2);
-  if (permEmpunhadura)       s.perms |= ((uint32_t)1 << 3);
-  if (permBateriaLitio)      s.perms |= ((uint32_t)1 << 4);
-  if (permIaMaker)           s.perms |= ((uint32_t)1 << 5);
-  if (permRefrigeracao)      s.perms |= ((uint32_t)1 << 6);
-  if (permTitanio)           s.perms |= ((uint32_t)1 << 7);
-  if (permOverclock)         s.perms |= ((uint32_t)1 << 8);
-  if (permNanobots)          s.perms |= ((uint32_t)1 << 9);
-  if (permSingularidade)     s.perms |= ((uint32_t)1 << 10);
-  if (permPlasmaCutter)      s.perms |= ((uint32_t)1 << 11);
-  if (permFusaoFria)         s.perms |= ((uint32_t)1 << 12);
-  if (permHiperconducao)     s.perms |= ((uint32_t)1 << 13);
-  if (permSinergiaQuantica)  s.perms |= ((uint32_t)1 << 14);
-  if (permLaserGama)         s.perms |= ((uint32_t)1 << 15);
-  if (permTaquions)          s.perms |= ((uint32_t)1 << 16);
-  if (permMateriaEscura)     s.perms |= ((uint32_t)1 << 17);
-  if (permHiperClique)       s.perms |= ((uint32_t)1 << 18);
-  if (permOnipotenciaMaker)  s.perms |= ((uint32_t)1 << 19);
-  s.checksum = calcChecksum(s);
-
-  EEPROM.put(0, s);
-  EEPROM.commit();
+  // TODO: reimplementar persistência
 }
 
 bool loadEEPROM() {
-  EEPROMState s;
-  EEPROM.get(0, s);
-  if (s.magic != EEPROM_MAGIC) return false;
-  if (calcChecksum(s) != s.checksum) return false;
-
-  makitas = s.makitas;
-  for (int i = 0; i < NUM_UPGRADES; i++) {
-    ownedUpgrades[i] = s.owned[i];
-  }
-  permLubrificante     = (s.perms & ((uint32_t)1 << 0)) != 0;
-  permDiscoDiamante    = (s.perms & ((uint32_t)1 << 1)) != 0;
-  permMotorBrushless   = (s.perms & ((uint32_t)1 << 2)) != 0;
-  permEmpunhadura      = (s.perms & ((uint32_t)1 << 3)) != 0;
-  permBateriaLitio     = (s.perms & ((uint32_t)1 << 4)) != 0;
-  permIaMaker          = (s.perms & ((uint32_t)1 << 5)) != 0;
-  permRefrigeracao     = (s.perms & ((uint32_t)1 << 6)) != 0;
-  permTitanio          = (s.perms & ((uint32_t)1 << 7)) != 0;
-  permOverclock        = (s.perms & ((uint32_t)1 << 8)) != 0;
-  permNanobots         = (s.perms & ((uint32_t)1 << 9)) != 0;
-  permSingularidade    = (s.perms & ((uint32_t)1 << 10)) != 0;
-  permPlasmaCutter     = (s.perms & ((uint32_t)1 << 11)) != 0;
-  permFusaoFria        = (s.perms & ((uint32_t)1 << 12)) != 0;
-  permHiperconducao    = (s.perms & ((uint32_t)1 << 13)) != 0;
-  permSinergiaQuantica = (s.perms & ((uint32_t)1 << 14)) != 0;
-  permLaserGama        = (s.perms & ((uint32_t)1 << 15)) != 0;
-  permTaquions         = (s.perms & ((uint32_t)1 << 16)) != 0;
-  permMateriaEscura    = (s.perms & ((uint32_t)1 << 17)) != 0;
-  permHiperClique      = (s.perms & ((uint32_t)1 << 18)) != 0;
-  permOnipotenciaMaker = (s.perms & ((uint32_t)1 << 19)) != 0;
-  return true;
+  // TODO: reimplementar persistência
+  return false;
 }
 
 void loadGameState() {
-  bool loadedFromFS = false;
-  if (LittleFS.exists("/gamestate.json")) {
-    File f = LittleFS.open("/gamestate.json", "r");
-    if (f) {
-      DynamicJsonDocument doc(3072);
-      DeserializationError err = deserializeJson(doc, f);
-      f.close();
-
-      if (!err && doc.containsKey("makitas")) {
-        makitas = doc["makitas"].as<double>();
-        
-        JsonObject ownedObj = doc["owned"];
-        if (!ownedObj.isNull()) {
-          for (int i = 0; i < NUM_UPGRADES; i++) {
-            ownedUpgrades[i] = ownedObj[UPGRADE_CONFIGS[i].id] | 0;
-          }
-        }
-
-        permLubrificante     = doc["permLubrificante"] | false;
-        permDiscoDiamante    = doc["permDiscoDiamante"] | false;
-        permMotorBrushless   = doc["permMotorBrushless"] | false;
-        permEmpunhadura      = doc["permEmpunhadura"] | false;
-        permBateriaLitio     = doc["permBateriaLitio"] | false;
-        permIaMaker          = doc["permIaMaker"] | false;
-        permRefrigeracao     = doc["permRefrigeracao"] | false;
-        permTitanio          = doc["permTitanio"] | false;
-        permOverclock        = doc["permOverclock"] | false;
-        permNanobots         = doc["permNanobots"] | false;
-        permSingularidade    = doc["permSingularidade"] | false;
-        permPlasmaCutter     = doc["permPlasmaCutter"] | false;
-        permFusaoFria        = doc["permFusaoFria"] | false;
-        permHiperconducao    = doc["permHiperconducao"] | false;
-        permSinergiaQuantica = doc["permSinergiaQuantica"] | false;
-        permLaserGama        = doc["permLaserGama"] | false;
-        permTaquions         = doc["permTaquions"] | false;
-        permMateriaEscura    = doc["permMateriaEscura"] | false;
-        permHiperClique      = doc["permHiperClique"] | false;
-        permOnipotenciaMaker = doc["permOnipotenciaMaker"] | false;
-        loadedFromFS = true;
-        Serial.printf("[STATE] Carregado do LittleFS com sucesso: Makitas=%.1f\n", makitas);
-      }
-    }
-  }
-
-  // Verifica backup seguro na EEPROM: se LittleFS falhou OU se EEPROM tem saldo maior (ex: pós-atualização OTA do FS)
-  EEPROMState s;
-  EEPROM.get(0, s);
-  if (s.magic == EEPROM_MAGIC && calcChecksum(s) == s.checksum) {
-    if (!loadedFromFS || s.makitas > makitas) {
-      Serial.printf("[STATE] Restaurando do backup seguro EEPROM: Makitas=%.1f\n", s.makitas);
-      makitas = s.makitas;
-      for (int i = 0; i < NUM_UPGRADES; i++) {
-        ownedUpgrades[i] = s.owned[i];
-      }
-      permLubrificante     = (s.perms & ((uint32_t)1 << 0)) != 0;
-      permDiscoDiamante    = (s.perms & ((uint32_t)1 << 1)) != 0;
-      permMotorBrushless   = (s.perms & ((uint32_t)1 << 2)) != 0;
-      permEmpunhadura      = (s.perms & ((uint32_t)1 << 3)) != 0;
-      permBateriaLitio     = (s.perms & ((uint32_t)1 << 4)) != 0;
-      permIaMaker          = (s.perms & ((uint32_t)1 << 5)) != 0;
-      permRefrigeracao     = (s.perms & ((uint32_t)1 << 6)) != 0;
-      permTitanio          = (s.perms & ((uint32_t)1 << 7)) != 0;
-      permOverclock        = (s.perms & ((uint32_t)1 << 8)) != 0;
-      permNanobots         = (s.perms & ((uint32_t)1 << 9)) != 0;
-      permSingularidade    = (s.perms & ((uint32_t)1 << 10)) != 0;
-      permPlasmaCutter     = (s.perms & ((uint32_t)1 << 11)) != 0;
-      permFusaoFria        = (s.perms & ((uint32_t)1 << 12)) != 0;
-      permHiperconducao    = (s.perms & ((uint32_t)1 << 13)) != 0;
-      permSinergiaQuantica = (s.perms & ((uint32_t)1 << 14)) != 0;
-      permLaserGama        = (s.perms & ((uint32_t)1 << 15)) != 0;
-      permTaquions         = (s.perms & ((uint32_t)1 << 16)) != 0;
-      permMateriaEscura    = (s.perms & ((uint32_t)1 << 17)) != 0;
-      permHiperClique      = (s.perms & ((uint32_t)1 << 18)) != 0;
-      permOnipotenciaMaker = (s.perms & ((uint32_t)1 << 19)) != 0;
-      saveGameState(); // Sincroniza imediatamente com o LittleFS
-    }
-  } else if (!loadedFromFS) {
-    Serial.println("[STATE] Nenhum estado anterior encontrado (inicio zerado).");
-  }
+  // TODO: reimplementar persistência
 }
 
 void saveGameState() {
-  File f = LittleFS.open("/gamestate.json", "w");
-  if (f) {
-    DynamicJsonDocument doc(3072);
-    doc["makitas"] = makitas;
-    
-    JsonObject ownedObj = doc.createNestedObject("owned");
-    for (int i = 0; i < NUM_UPGRADES; i++) {
-      ownedObj[UPGRADE_CONFIGS[i].id] = ownedUpgrades[i];
-    }
-
-    doc["permLubrificante"]     = permLubrificante;
-    doc["permDiscoDiamante"]    = permDiscoDiamante;
-    doc["permMotorBrushless"]   = permMotorBrushless;
-    doc["permEmpunhadura"]      = permEmpunhadura;
-    doc["permBateriaLitio"]     = permBateriaLitio;
-    doc["permIaMaker"]          = permIaMaker;
-    doc["permRefrigeracao"]     = permRefrigeracao;
-    doc["permTitanio"]          = permTitanio;
-    doc["permOverclock"]        = permOverclock;
-    doc["permNanobots"]         = permNanobots;
-    doc["permSingularidade"]    = permSingularidade;
-    doc["permPlasmaCutter"]     = permPlasmaCutter;
-    doc["permFusaoFria"]        = permFusaoFria;
-    doc["permHiperconducao"]    = permHiperconducao;
-    doc["permSinergiaQuantica"] = permSinergiaQuantica;
-    doc["permLaserGama"]        = permLaserGama;
-    doc["permTaquions"]         = permTaquions;
-    doc["permMateriaEscura"]    = permMateriaEscura;
-    doc["permHiperClique"]      = permHiperClique;
-    doc["permOnipotenciaMaker"] = permOnipotenciaMaker;
-
-    serializeJson(doc, f);
-    f.flush();
-    f.close();
-  }
-
-  saveEEPROM();
+  // TODO: reimplementar persistência
 }
 
 void resetGameState() {
@@ -792,7 +641,7 @@ void processPermBuy(String permId, double cost) {
     permMotorBrushless = true; bought = true;
   } else if (permId == "perm_empunhadura" && !permEmpunhadura && permDiscoDiamante) {
     permEmpunhadura = true; bought = true;
-  } else if ((permId == "perm_bateria_lítio" || permId == "perm_bateria_litio") && !permBateriaLitio && permMotorBrushless) {
+  } else if (permId == "perm_bateria_litio" && !permBateriaLitio && permMotorBrushless) {
     permBateriaLitio = true; bought = true;
   } else if (permId == "perm_ia_maker" && !permIaMaker && permBateriaLitio) {
     permIaMaker = true; bought = true;
@@ -852,8 +701,7 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
         String qtyStr = msg.substring(firstSep + 1);
         int upIndex = getUpgradeIndex(upId);
         if (upIndex != -1) {
-          processBuy(upIndex, qtyStr);
-          saveGameState();
+          processBuy(upIndex, qtyStr); // processBuy() já chama saveGameState() internamente
         }
       }
     } else if (msg.startsWith("PERM_BUY:")) {
@@ -934,37 +782,59 @@ void checkOTA() {
   }
 }
 
+// Buffer Serial Não-Bloqueante para recepção do Arduino Mega
+char megaRxBuf[32];
+uint8_t megaRxIdx = 0;
+
+void processarSerialMega() {
+  while (megaSerial.available() > 0) {
+    char c = (char)megaSerial.read();
+    if (c == '\n' || c == '\r') {
+      if (megaRxIdx > 0) {
+        megaRxBuf[megaRxIdx] = '\0';
+        if (strcmp(megaRxBuf, "CLICK") == 0) {
+          handleClick();
+        }
+        megaRxIdx = 0;
+      }
+    } else if (megaRxIdx < sizeof(megaRxBuf) - 1) {
+      if (c >= 32 && c <= 126) {
+        megaRxBuf[megaRxIdx++] = c;
+      }
+    } else {
+      megaRxIdx = 0;
+    }
+  }
+}
+
 void setup() {
   system_update_cpu_freq(160); // 160MHz para máxima precisão de baud rate na SoftwareSerial
   Serial.begin(115200);
-  megaSerial.begin(115200);
+  megaSerial.begin(GAME_BAUD_RATE);
 
   // Inicializa o pino de reset do Mega em modo Open-Drain (alta impedancia)
   pinMode(MEGA_RESET_PIN, INPUT);
-
-  EEPROM.begin(128);
 
   if (!LittleFS.begin()) {
     Serial.println("[FS] Erro ao montar LittleFS");
   }
 
-  // Carrega estado imediatamente da flash/EEPROM antes de qualquer conexão ou OTA
-  loadGameState();
-
   WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
+  Serial.print("[WiFi] Conectando");
+  unsigned long wifiStart = millis();
+  while (WiFi.status() != WL_CONNECTED && (millis() - wifiStart < 10000)) {
     delay(500);
     Serial.print(".");
   }
   Serial.println();
-  Serial.print("[WiFi] IP: ");
-  Serial.println(WiFi.localIP());
-
-  // Checa e aplica OTA antes de subir os serviços
-  checkOTA();
-
-  // Garante que o estado (mantido em RAM/EEPROM) seja regravado no LittleFS caso o FS tenha sido atualizado por OTA
-  saveGameState();
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("[WiFi] Conectado! IP: ");
+    Serial.println(WiFi.localIP());
+    // Checa e aplica OTA antes de subir os serviços se conectado
+    checkOTA();
+  } else {
+    Serial.println("[WiFi] Nao conectado (operando em modo offline)");
+  }
 
   // Reinicia o Arduino Mega para sincronizar inicializacao e LCD
   resetMega();
@@ -1000,9 +870,15 @@ void setup() {
   webSocket.onEvent(webSocketEvent);
 
   notifyMega();
+  // Envia IP da ESP para o display LCD do Arduino Mega
+  if (WiFi.status() == WL_CONNECTED) {
+    megaSerial.println("IP:" + WiFi.localIP().toString());
+  } else {
+    megaSerial.println("IP:Sem WiFi");
+  }
+  megaSerial.flush();
 }
 
-unsigned long lastSave = 0;
 unsigned long lastMegaUpdate = 0;
 
 void loop() {
@@ -1010,14 +886,8 @@ void loop() {
   server.handleClient();
   webSocket.loop();
 
-  // Recebe cliques do Arduino Mega
-  if (megaSerial.available()) {
-    String cmd = megaSerial.readStringUntil('\n');
-    cmd.trim();
-    if (cmd == "CLICK") {
-      handleClick();
-    }
-  }
+  // Recebe cliques do Arduino Mega de forma 100% não-bloqueante
+  processarSerialMega();
 
   // Produção passiva autoritativa no ESP
   unsigned long now = millis();
@@ -1041,11 +911,4 @@ void loop() {
     broadcastState();
   }
 
-  // Autosave a cada 5 segundos se houver saldo ou produção
-  if (now - lastSave >= 5000) {
-    lastSave = now;
-    if (getTotalMps() > 0 || makitas > 0) {
-      saveGameState();
-    }
-  }
 }

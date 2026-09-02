@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Makita clicker · ESP32</title>
+    <title>Makita clicker · ESP8266</title>
     <style>
         :root {
             --bg-void: #0a0a0a;
@@ -821,7 +821,7 @@
             purchased: false
         },
         {
-            id: 'perm_bateria_lítio',
+            id: 'perm_bateria_litio',
             name: 'Bateria Makita 40V Max XGT',
             icon: '🔋',
             cost: 1500,
@@ -836,7 +836,7 @@
             icon: '🤖',
             cost: 5000,
             reqMakitas: 2000,
-            reqUpgrade: 'perm_bateria_lítio',
+            reqUpgrade: 'perm_bateria_litio',
             desc: 'Automação inteligente de fabricação. Aumenta a produção global em +50%.',
             purchased: false
         },
@@ -1016,55 +1016,26 @@
 
     // ---------- PERSISTÊNCIA LOCAL (LOCALSTORAGE) ----------
     function loadLocalPermanentProgress() {
-        const savedPerms = localStorage.getItem('makita_perm_upgrades');
-        if (savedPerms) {
-            try {
-                const list = JSON.parse(savedPerms);
-                permanentUpgrades.forEach(u => {
-                    if (list.includes(u.id)) u.purchased = true;
-                });
-            } catch(e) {}
-        }
-
-        const savedTotal = localStorage.getItem('makita_total_produced');
-        if (savedTotal) {
-            totalMakitasMade = parseFloat(savedTotal) || 0;
-        }
+        // TODO: reimplementar persistência
     }
 
     function savePermanentProgress() {
-        const purchasedIds = permanentUpgrades.filter(u => u.purchased).map(u => u.id);
-        localStorage.setItem('makita_perm_upgrades', JSON.stringify(purchasedIds));
-        localStorage.setItem('makita_total_produced', totalMakitasMade.toString());
+        // TODO: reimplementar persistência
     }
 
     function loadLocalState() {
-        const savedState = localStorage.getItem('makita_local_state');
-        if (savedState) {
-            try {
-                const parsed = JSON.parse(savedState);
-                if (typeof parsed.makitas === 'number') {
-                    makitas = parsed.makitas;
-                }
-                if (parsed.owned && typeof parsed.owned === 'object') {
-                    Object.assign(owned, parsed.owned);
-                }
-            } catch(e) {}
-        }
+        // TODO: reimplementar persistência
     }
 
     function saveLocalState() {
-        localStorage.setItem('makita_local_state', JSON.stringify({
-            makitas: makitas,
-            owned: owned
-        }));
+        // TODO: reimplementar persistência
     }
 
     // ---------- CÁLCULOS LOCAIS AUTÔNOMOS ----------
     function calculateLocalMps() {
         const permLub = permanentUpgrades.find(u => u.id === 'perm_lubrificante')?.purchased;
         const permBrush = permanentUpgrades.find(u => u.id === 'perm_motor_brushless')?.purchased;
-        const permBat = permanentUpgrades.find(u => u.id === 'perm_bateria_lítio')?.purchased;
+        const permBat = permanentUpgrades.find(u => u.id === 'perm_bateria_litio')?.purchased;
         const permIa = permanentUpgrades.find(u => u.id === 'perm_ia_maker')?.purchased;
         const permRefrig = permanentUpgrades.find(u => u.id === 'perm_refrigeracao')?.purchased;
         const permNano = permanentUpgrades.find(u => u.id === 'perm_nanobots')?.purchased;
@@ -1596,8 +1567,12 @@
             });
         }
 
-        // Atualiza mps e poder de clique oficiais
-        mps = calculateLocalMps();
+        // Atualiza mps e poder de clique oficiais (aceita valor do servidor se disponível)
+        if (typeof data.mps === 'number' && data.mps > 0) {
+            mps = data.mps;
+        } else {
+            mps = calculateLocalMps();
+        }
         serverClickPower = calculateLocalClickPower();
 
         savePermanentProgress();
@@ -1691,12 +1666,6 @@
 
     // Inicia o motor gráfico suave a 60 FPS
     requestAnimationFrame(gameLoop);
-
-    // Salva progresso em segundo plano a cada 3 segundos
-    setInterval(() => {
-        savePermanentProgress();
-        saveLocalState();
-    }, 3000);
 </script>
 </body>
 </html>

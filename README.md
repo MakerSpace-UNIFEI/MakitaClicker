@@ -26,22 +26,22 @@ MakitaClicker é um jogo estilo *cookie clicker* físico-digital, onde o jogador
 O jogo tem dois modos de interação simultâneos e integrados:
 
 **1. Botão Físico**
-O jogador pressiona um botão conectado ao Arduino Mega (pino 7). O Mega envia o comando `CLICK` ao ESP8266 via Serial0 (115200 baud). O ESP soma as Makitas calculando os multiplicadores da árvore de habilidades e transmite o novo estado para todos os clientes web via WebSocket.
+O jogador pressiona um botão conectado ao Arduino Mega (pino 7). O Mega envia o comando `CLICK` ao ESP8266 via Serial0 (38400 baud estável). O ESP soma as Makitas calculando os multiplicadores da árvore de habilidades e transmite o novo estado para todos os clientes web via WebSocket.
 
 **2. Interface Web**
 Qualquer dispositivo na mesma rede Wi-Fi acessa `http://esp-painel.local` (ou pelo IP). A página HTML — servida diretamente da memória flash do ESP (LittleFS) — se comunica com o ESP via WebSocket na porta 81 em tempo real.
 
 **Produção passiva:** upgrades e melhorias permanentes geram Makitas automaticamente a cada 100ms e salvam o progresso em `/gamestate.json`.
 
-**LCD:** O Mega exibe o saldo e a taxa de produção em tempo real num display LCD I2C 20×4, recebendo atualizações do ESP via Serial.
+**LCD:** O Mega exibe o saldo e a taxa de produção em tempo real num display LCD I2C 20×4 (com auto-detecção de endereço 0x27 / 0x3F), recebendo atualizações do ESP via Serial.
 
 ```
-[ Botão Físico ] ──Serial──▶ [ Arduino Mega 2560 ] ──Serial0 (115200)──▶ [ ESP8266 ]
-                              [ LCD 20x4 I2C ]                           │       │
-                              [ Display ]    ◀──────Serial───────────────┘       │
-                                                                                 │ Wi-Fi
-                                                                         [ Clientes Web ]
-                                                                         [ WebSocket :81 ]
+[ Botão Físico ] ──Serial──▶ [ Arduino Mega 2560 ] ──Serial0 (38400 / 115200 OTA)──▶ [ ESP8266 ]
+                              [ LCD 20x4 I2C ]                                      │       │
+                              [ Display ]    ◀───────────Serial─────────────────────┘       │
+                                                                                            │ Wi-Fi
+                                                                                    [ Clientes Web ]
+                                                                                    [ WebSocket :81 ]
 ```
 
 ---
@@ -52,7 +52,7 @@ Qualquer dispositivo na mesma rede Wi-Fi acessa `http://esp-painel.local` (ou pe
 |---|---|
 | **Arduino Mega 2560** | Controle do botão físico, display LCD e recepção de comandos |
 | **ESP8266 NodeMCU v2** | Wi-Fi, WebServer, WebSocket, ponte OTA e gravador STK500v2 do Mega |
-| **Display LCD I2C 20×4** | Exibe saldo e taxa (endereço I2C padrão `0x27`) |
+| **Display LCD I2C 20×4** | Exibe saldo e taxa (auto-detecção `0x27` ou `0x3F`) |
 | **Botão Físico** | Pino digital 7 do Mega (com resistor interno `INPUT_PULLUP`) |
 
 ### Conexões entre Arduino Mega e ESP8266 (OTA Total + Jogo)
@@ -64,7 +64,7 @@ Qualquer dispositivo na mesma rede Wi-Fi acessa `http://esp-painel.local` (ou pe
 | **RESET** | **D5 (GPIO14)** | Pulso de reset em modo Open-Drain seguro |
 | **GND** | **GND** | Terra de referência comum |
 
-> ℹ️ **Por que os pinos 0 e 1?** O bootloader padrão de fábrica do ATmega2560 (STK500v2) escuta na porta UART0 (pinos 0 e 1) a **115200 baud**. Conectando esses pinos, a mesma conexão serve para a jogabilidade normal e para a gravação remota de firmware.
+> ℹ️ **Por que os pinos 0 e 1?** O bootloader padrão de fábrica do ATmega2560 (STK500v2) escuta na porta UART0 (pinos 0 e 1) a **115200 baud**. Conectando esses pinos, a mesma conexão serve para a jogabilidade normal (a **38400 baud** estáveis) e para a gravação remota de firmware (a **115200 baud**).
 
 ---
 
@@ -73,16 +73,16 @@ Qualquer dispositivo na mesma rede Wi-Fi acessa `http://esp-painel.local` (ou pe
 ### Arduino Mega (`codigo_arduino/codigo_arduino.ino`)
 
 - Lê o botão físico no Pino 7 com debounce rápido de 35ms
-- Ao pressionar: incrementa saldo local instantaneamente e envia `CLICK\n` pela `Serial` (115200 baud) para o ESP
+- Ao pressionar: incrementa saldo local instantaneamente e envia `CLICK\n` pela `Serial` (38400 baud) para o ESP
 - Escuta a `Serial` aguardando pacotes `MAKITA:<saldo>,<mps>,<clickPower>,<totalOwned>` enviados pelo ESP
-- Atualiza o LCD 20×4 com animações em tempo real, caracteres customizados (lâmina giratória, moedas, faíscas, troféu 99B) e carrossel de telemetria com porcentagem da Meta de 99 Bilhões
+- Atualiza o LCD 20×4 com auto-detecção I2C, animações em tempo real, caracteres customizados (lâmina giratória, moedas, faíscas, troféu 99B) e carrossel de telemetria com porcentagem da Meta de 99 Bilhões
 
 ### ESP8266 (`codigo_esp/codigo_esp.ino`)
 
 Ao ligar, o ESP executa em sequência:
 
 ```
-1. Inicia CPU em 160MHz, Serial USB (115200) e megaSerial (115200)
+1. Inicia CPU em 160MHz, Serial USB (115200) e megaSerial (38400)
 2. Inicializa EEPROM (128 bytes) e monta a partição LittleFS
 3. Conecta à rede Wi-Fi "MakerSpace UNIFEI"
 4. Executa checkOTA():

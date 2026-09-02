@@ -9,7 +9,7 @@
 O **MakitaClicker** é um jogo híbrido físico/digital. O hardware do **ESP8266** atua como o servidor autoritativo da partida (saldo de Makitas até 99B+, produção passiva, compras de upgrades, árvore de habilidades e persistência em flash), enquanto a **Interface Web** e o **Arduino Mega** são clientes de interação em tempo real.
 
 ```
-┌─────────────────┐      Serial0 115200 baud      ┌─────────────────────────┐
+┌─────────────────┐   Serial0 38400 (115200 OTA)  ┌─────────────────────────┐
 │  Arduino Mega   │ ◄───────────────────────────► │         ESP8266         │
 │ (Botão 7 + LCD) │    CLICK / MAKITA:S,M,C,O     │ (Servidor Autoritativo) │
 └─────────────────┘    (STK500v2 OTA no Boot)     └────────────┬────────────┘
@@ -122,11 +122,11 @@ As melhorias permanentes fornecem **multiplicadores e bônus diretos** tanto na 
 - `PERM_BUY:<permId>:<cost>`: Compra e ativa melhoria permanente na árvore.
 - `RESET`: Reinicia completamente o progresso do jogo.
 
-### Serial UART0 (115200 baud) — ESP ➔ Arduino Mega:
+### Serial UART0 (38400 baud) — ESP ➔ Arduino Mega:
 - Formato: `MAKITA:<saldo_float>,<mps_float>,<clickPower_float>,<totalOwned_int>\n`
 - Exemplo: `MAKITA:99000000000.0,15000000.0,2500.0,240`
 
-### Serial UART0 (115200 baud) — Arduino Mega ➔ ESP:
+### Serial UART0 (38400 baud) — Arduino Mega ➔ ESP:
 - Formato: `CLICK\n` (Acionado pelo botão no pino 7 com debounce de 35ms).
 
 ---
