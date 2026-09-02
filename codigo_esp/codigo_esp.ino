@@ -65,14 +65,14 @@ void resetMega() {
 }
 
 // ===== ROTINA STK500v2 PARA GRAVAÇÃO DO ARDUINO MEGA =====
-bool sendStk500v2(Stream &s, const uint8_t *payload, uint16_t len, uint8_t *resp, uint16_t &respLen, uint8_t &seqNum, uint32_t timeoutMs = 2000) {
+bool sendStk500v2(Stream &s, const uint8_t *payload, uint16_t len, uint8_t *resp, uint16_t &respLen, uint8_t seqNum = 1, uint32_t timeoutMs = 2000) {
   // Limpa qualquer byte residual na serial antes de enviar
   while (s.available()) s.read();
   if (resp) memset(resp, 0xFF, 64);
 
   uint8_t header[5];
   header[0] = 0x1B; // MESSAGE_START
-  header[1] = seqNum;
+  header[1] = seqNum; // seqNum=1 sempre aceito pelo bootloader STK500v2 (evita dessincronismo)
   header[2] = (len >> 8) & 0xFF;
   header[3] = len & 0xFF;
   header[4] = 0x0E; // TOKEN
@@ -104,7 +104,7 @@ bool sendStk500v2(Stream &s, const uint8_t *payload, uint16_t len, uint8_t *resp
 
   if (s.available() < 5 || s.read() != 0x1B) {
     int avail = s.available();
-    Serial.printf("[STK-DBG] Timeout/No 0x1B (avail=%d disc=%d", avail, discarded);
+    Serial.printf("[STK-DBG] Timeout cmd=0x%02X (avail=%d disc=%d", payload ? payload[0] : 0, avail, discarded);
     if (discarded > 0) {
       Serial.print(" disc=[");
       for (int i = 0; i < min(discarded, (int)sizeof(discBuf)); i++) Serial.printf("0x%02X ", discBuf[i]);
@@ -146,7 +146,6 @@ bool sendStk500v2(Stream &s, const uint8_t *payload, uint16_t len, uint8_t *resp
     rCheck ^= b;
   }
   uint8_t expCheck = s.read();
-  seqNum++;
 
   if (rCheck != expCheck) {
     Serial.printf("[STK-DBG] Checksum mismatch: calc 0x%02X != exp 0x%02X\n", rCheck, expCheck);
@@ -240,13 +239,12 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
   uint8_t signOnCmd[] = { 0x01 };
   uint16_t respLen = 0;
   uint8_t resp[64];
-  uint8_t seq = 1;
 
   Serial.println("[OTA-MEGA] Tentando handshake STK500v2 @ 115200 baud...");
   for (int attempt = 0; attempt < 12 && !syncOk; attempt++) {
     ESP.wdtFeed();
     yield();
-    if (sendStk500v2(megaSerial, signOnCmd, sizeof(signOnCmd), resp, respLen, seq, 150)) {
+    if (sendStk500v2(megaSerial, signOnCmd, sizeof(signOnCmd), resp, respLen, 1, 150)) {
       if (respLen >= 2 && resp[0] == 0x01 && resp[1] == 0x00) {
         syncOk = true;
         Serial.println("[OTA-MEGA] Handshake STK500v2 OK @ 115200!");
@@ -273,7 +271,7 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
     for (int attempt = 0; attempt < 12 && !syncOk; attempt++) {
       ESP.wdtFeed();
       yield();
-      if (sendStk500v2(megaSerial, signOnCmd, sizeof(signOnCmd), resp, respLen, seq, 150)) {
+      if (sendStk500v2(megaSerial, signOnCmd, sizeof(signOnCmd), resp, respLen, 1, 150)) {
         if (respLen >= 2 && resp[0] == 0x01 && resp[1] == 0x00) {
           syncOk = true;
           Serial.println("[OTA-MEGA] Handshake STK500v2 OK @ 57600!");
@@ -294,7 +292,15 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
 
   // 2. Enter Prog Mode (12 bytes padrão STK500v2)
   uint8_t enterProg[] = { 0x10, 0xC8, 0x64, 0x19, 0x20, 0x00, 0x53, 0x03, 0xAC, 0x53, 0x00, 0x00 };
-  sendStk500v2(megaSerial, enterProg, sizeof(enterProg), resp, respLen, seq, 1000);
+  Serial.println("[OTA-MEGA] Ativando modo de programacao (EnterProg)...");
+  if (!sendStk500v2(megaSerial, enterProg, sizeof(enterProg), resp, respLen, 1, 1000) || resp[1] != 0x00) {
+    Serial.printf("[OTA-MEGA] Falha ao ativar modo de programacao (resp=0x%02X)\n", resp[1]);
+    f.close();
+    LittleFS.remove("/mega_temp.bin");
+    megaSerial.begin(GAME_BAUD_RATE);
+    return false;
+  }
+  Serial.println("[OTA-MEGA] Modo de programacao ATIVADO com sucesso!");
 
   // 3. Grava páginas de 256 bytes lendo do arquivo local
   const uint16_t PAGE_SIZE = 256;
@@ -313,7 +319,7 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
     if (bytesRead != toRead) {
       Serial.printf("[OTA-MEGA] Erro: leitura LittleFS incompleta (%d/%d bytes), abortando.\n", bytesRead, toRead);
       uint8_t leaveProgErr[] = { 0x11, 0x01, 0x01 };
-      sendStk500v2(megaSerial, leaveProgErr, sizeof(leaveProgErr), resp, respLen, seq, 1000);
+      sendStk500v2(megaSerial, leaveProgErr, sizeof(leaveProgErr), resp, respLen, 1, 1000);
       f.close();
       LittleFS.remove("/mega_temp.bin");
       megaSerial.begin(GAME_BAUD_RATE);
@@ -341,7 +347,7 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
         (uint8_t)(wordAddr & 0xFF)
       };
 
-      if (!sendStk500v2(megaSerial, loadAddrCmd, sizeof(loadAddrCmd), resp, respLen, seq, 1000) || resp[1] != 0x00) {
+      if (!sendStk500v2(megaSerial, loadAddrCmd, sizeof(loadAddrCmd), resp, respLen, 1, 1000) || resp[1] != 0x00) {
         delay(15);
         continue;
       }
@@ -359,7 +365,7 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
       progPayload[9] = 0x00;
       memcpy(&progPayload[10], pageBuffer, PAGE_SIZE);
 
-      if (sendStk500v2(megaSerial, progPayload, sizeof(progPayload), resp, respLen, seq, 2000) && resp[1] == 0x00) {
+      if (sendStk500v2(megaSerial, progPayload, sizeof(progPayload), resp, respLen, 1, 2000) && resp[1] == 0x00) {
         pageOk = true;
         break;
       }
@@ -369,7 +375,7 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
     if (!pageOk) {
       Serial.printf("[OTA-MEGA] Erro gravando pagina em 0x%X (status 0x%02X)\n", currentAddr, resp[1]);
       uint8_t leaveProg[] = { 0x11, 0x01, 0x01 };
-      sendStk500v2(megaSerial, leaveProg, sizeof(leaveProg), resp, respLen, seq, 1000);
+      sendStk500v2(megaSerial, leaveProg, sizeof(leaveProg), resp, respLen, 1, 1000);
       f.close();
       LittleFS.remove("/mega_temp.bin");
       megaSerial.begin(GAME_BAUD_RATE);
@@ -387,7 +393,7 @@ bool updateMega(WiFiClientSecure &client, const String &url) {
 
   // 4. Leave Prog Mode
   uint8_t leaveProg[] = { 0x11, 0x01, 0x01 };
-  sendStk500v2(megaSerial, leaveProg, sizeof(leaveProg), resp, respLen, seq, 1000);
+  sendStk500v2(megaSerial, leaveProg, sizeof(leaveProg), resp, respLen, 1, 1000);
 
   f.close();
   LittleFS.remove("/mega_temp.bin");
