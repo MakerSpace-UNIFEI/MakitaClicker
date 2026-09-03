@@ -157,6 +157,7 @@ function getKV(env) {
     return { kv: env.MAKITA_KV, name: 'MAKITA_KV' };
   }
   for (const [key, val] of Object.entries(env)) {
+    if (key === 'ASSETS') continue; // Ignora o repositório interno de assets estáticos do Pages
     if (val && typeof val.get === 'function' && typeof val.put === 'function') {
       return { kv: val, name: key };
     }
