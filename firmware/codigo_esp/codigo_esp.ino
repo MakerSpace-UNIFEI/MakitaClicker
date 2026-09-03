@@ -496,74 +496,62 @@ void syncWithCloud() {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument doc;
 #else
-    DynamicJsonDocument doc(2048);
+    DynamicJsonDocument doc(4096);
 #endif
     DeserializationError err = deserializeJson(doc, responsePayload);
 
     if (!err) {
-      // Servidor é MASTER: a ESP sempre adota e exibe o saldo oficial do servidor
+      // 1. Saldo Monotônico: adota se o servidor estiver com saldo maior
       if (doc.containsKey("makitas")) {
-        makitas = doc["makitas"].as<double>();
+        double serverMakitas = doc["makitas"].as<double>();
+        if (serverMakitas > makitas) {
+          makitas = serverMakitas;
+        }
       }
 
       // Desconta cliques confirmados
       pendingPhysicalClicks -= clicksToSend;
       if (pendingPhysicalClicks < 0) pendingPhysicalClicks = 0;
 
-      // Guard contra KV stale: só aplica owned/perms do servidor se o totalOwned
-      // recebido for >= ao totalOwned local (evita estado zerado sobrescrever upgrades reais)
-      int serverTotalOwned = doc["totalOwned"] | -1;
-      int localTotalOwned = 0;
-      for (int i = 0; i < NUM_UPGRADES; i++) localTotalOwned += ownedUpgrades[i];
-
-      if (serverTotalOwned < 0 || serverTotalOwned >= localTotalOwned) {
-        // Aplica owned do servidor
-        if (doc.containsKey("owned")) {
-          JsonObject ownedObj = doc["owned"].as<JsonObject>();
-          for (int i = 0; i < NUM_UPGRADES; i++) {
-            if (ownedObj.containsKey(UPGRADE_CONFIGS[i].id)) {
-              ownedUpgrades[i] = ownedObj[UPGRADE_CONFIGS[i].id].as<int>();
+      // 2. Upgrades: NUNCA reduz. Mantém sempre o maior nível de cada oficina
+      if (doc.containsKey("owned")) {
+        JsonObject ownedObj = doc["owned"].as<JsonObject>();
+        for (int i = 0; i < NUM_UPGRADES; i++) {
+          if (ownedObj.containsKey(UPGRADE_CONFIGS[i].id)) {
+            int serverVal = ownedObj[UPGRADE_CONFIGS[i].id].as<int>();
+            if (serverVal > ownedUpgrades[i]) {
+              ownedUpgrades[i] = serverVal;
             }
           }
         }
-
-        // Aplica perms do servidor
-        if (doc.containsKey("perms")) {
-          JsonObject permsObj = doc["perms"].as<JsonObject>();
-          permLubrificante = permsObj["perm_lubrificante"] | false;
-          permDiscoDiamante = permsObj["perm_disco_diamante"] | false;
-          permMotorBrushless = permsObj["perm_motor_brushless"] | false;
-          permEmpunhadura = permsObj["perm_empunhadura"] | false;
-          permBateriaLitio = permsObj["perm_bateria_litio"] | false;
-          permIaMaker = permsObj["perm_ia_maker"] | false;
-          permRefrigeracao = permsObj["perm_refrigeracao"] | false;
-          permTitanio = permsObj["perm_titanio"] | false;
-          permOverclock = permsObj["perm_overclock"] | false;
-          permNanobots = permsObj["perm_nanobots"] | false;
-          permSingularidade = permsObj["perm_singularidade"] | false;
-          permPlasmaCutter = permsObj["perm_plasma_cutter"] | false;
-          permFusaoFria = permsObj["perm_fusao_fria"] | false;
-          permHiperconducao = permsObj["perm_hiperconducao"] | false;
-          permSinergiaQuantica = permsObj["perm_sinergia_quantica"] | false;
-          permLaserGama = permsObj["perm_laser_gama"] | false;
-          permTaquions = permsObj["perm_taquions"] | false;
-          permMateriaEscura = permsObj["perm_materia_escura"] | false;
-          permHiperClique = permsObj["perm_hiper_clique"] | false;
-          permOnipotenciaMaker = permsObj["perm_onipotencia_maker"] | false;
-        }
-      } else {
-        Serial.printf("[CLOUD] Guard: servidor totalOwned=%d < local=%d. owned/perms preservados.\n",
-                      serverTotalOwned, localTotalOwned);
       }
 
-      // Preserva cachedMps se recalculate retornar 0 mas havia upgrades locais
-      double prevMps = cachedMps;
+      // 3. Tecnologias Permanentes: Ativa localmente qualquer tecnologia liberada na nuvem
+      if (doc.containsKey("perms")) {
+        JsonObject permsObj = doc["perms"].as<JsonObject>();
+        if (permsObj["perm_lubrificante"] | false) permLubrificante = true;
+        if (permsObj["perm_disco_diamante"] | false) permDiscoDiamante = true;
+        if (permsObj["perm_motor_brushless"] | false) permMotorBrushless = true;
+        if (permsObj["perm_empunhadura"] | false) permEmpunhadura = true;
+        if (permsObj["perm_bateria_litio"] | false) permBateriaLitio = true;
+        if (permsObj["perm_ia_maker"] | false) permIaMaker = true;
+        if (permsObj["perm_refrigeracao"] | false) permRefrigeracao = true;
+        if (permsObj["perm_titanio"] | false) permTitanio = true;
+        if (permsObj["perm_overclock"] | false) permOverclock = true;
+        if (permsObj["perm_nanobots"] | false) permNanobots = true;
+        if (permsObj["perm_singularidade"] | false) permSingularidade = true;
+        if (permsObj["perm_plasma_cutter"] | false) permPlasmaCutter = true;
+        if (permsObj["perm_fusao_fria"] | false) permFusaoFria = true;
+        if (permsObj["perm_hiperconducao"] | false) permHiperconducao = true;
+        if (permsObj["perm_sinergia_quantica"] | false) permSinergiaQuantica = true;
+        if (permsObj["perm_laser_gama"] | false) permLaserGama = true;
+        if (permsObj["perm_taquions"] | false) permTaquions = true;
+        if (permsObj["perm_materia_escura"] | false) permMateriaEscura = true;
+        if (permsObj["perm_hiper_clique"] | false) permHiperClique = true;
+        if (permsObj["perm_onipotencia_maker"] | false) permOnipotenciaMaker = true;
+      }
+
       recalculateStats();
-      if (cachedMps == 0.0 && localTotalOwned > 0 && prevMps > 0.0) {
-        cachedMps = prevMps; // KV stale guard: não zera MPS local
-        Serial.printf("[CLOUD] Guard: MPS recalc=0, restaurando prevMps=%.1f\n", prevMps);
-      }
-
       saveLocalGameState();
       precisaAtualizarLCD = true;
       Serial.printf("[CLOUD] Sync OK! Saldo: %.1f | MPS: %.1f\n", makitas, cachedMps);

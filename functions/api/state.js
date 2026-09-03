@@ -271,63 +271,46 @@ export async function onRequestPost(context) {
     });
   }
 
-  // RECONCILIAÇÃO DE SALDO:
-  // 1. Se a requisição vem da WEB (source !== 'esp'):
-  //    O SITE É O PRINCIPAL (MASTER)! O site envia para o KV e o KV puxa dele.
-  //    Se o KV tiver saldo estritamente maior (ex: cliques offline da ESP já registrados), mantém o maior.
-  //    Caso contrário, adota o saldo do site.
-  // 2. Se a requisição vem da ESP (source === 'esp'):
-  //    A ESP só envia se estiver com contagem MAIOR que o KV.
-  //    Se a ESP for maior: KV adota o saldo da ESP.
-  //    Se a ESP for menor ou igual: KV mantém seu saldo e soma cliques pendentes.
+  // RECONCILIAÇÃO MONOTÔNICA E CONVERGÊNCIA (CRDT / RATCHET):
+  // 1. Saldo e Total: O saldo só pode AUMENTAR. Nunca adota um saldo menor no sync.
   if (clientMakitas !== null) {
-    if (!isEsp) {
-      // Origem Web: o site é o principal!
-      if (clientMakitas > state.makitas || Math.abs(clientMakitas - state.makitas) < 500) {
-        state.makitas = clientMakitas;
-      }
-      if (clientTotal && clientTotal > (state.totalMakitasMade || 0)) {
-        state.totalMakitasMade = clientTotal;
-      } else if (state.makitas > (state.totalMakitasMade || 0)) {
-        state.totalMakitasMade = state.makitas;
-      }
-    } else {
-      // Origem ESP: apenas adota se a contagem da ESP for MAIOR que o KV
-      if (clientMakitas > state.makitas) {
-        state.makitas = clientMakitas;
-        if (state.makitas > (state.totalMakitasMade || 0)) {
-          state.totalMakitasMade = state.makitas;
-        }
-      }
+    if (clientMakitas > state.makitas) {
+      state.makitas = clientMakitas;
+    }
+    if (clientTotal && clientTotal > (state.totalMakitasMade || 0)) {
+      state.totalMakitasMade = clientTotal;
+    } else if (state.makitas > (state.totalMakitasMade || 0)) {
+      state.totalMakitasMade = state.makitas;
     }
   }
 
-  // Processa cliques pendentes enviados (se o cliente não estava já à frente no saldo)
-  if (clicks > 0 && (clientMakitas === null || clientMakitas <= state.makitas)) {
+  // Processa cliques pendentes enviados
+  if (clicks > 0) {
     const gainPerClick = getSingleClickGain(state.perms, state.mps);
     const totalGain = gainPerClick * clicks;
     state.makitas += totalGain;
     state.totalMakitasMade = (state.totalMakitasMade || 0) + totalGain;
   }
 
-  // PROTEÇÃO DE UPGRADES CONTRA ISOLATE SEM ESTADO (COLD START):
-  // Apenas clientes Web (NUNCA a ESP) podem restaurar upgrades se o servidor estiver zerado
-  if (!isEsp && body.owned && typeof body.owned === 'object') {
-    const clientOwnedTotal = getTotalOwned(body.owned);
-    const serverOwnedTotal = getTotalOwned(state.owned);
-    if (clientOwnedTotal > serverOwnedTotal) {
-      state.owned = state.owned || {};
-      for (const u of UPGRADES) {
-        if (typeof body.owned[u.id] === 'number') {
-          state.owned[u.id] = Math.max(state.owned[u.id] || 0, Math.min(MAX_OWNED, body.owned[u.id]));
-        }
+  // 2. Upgrades da Loja: Convergência aditiva — sempre mantém o MAIOR nível de cada oficina
+  if (body.owned && typeof body.owned === 'object') {
+    state.owned = state.owned || {};
+    for (const u of UPGRADES) {
+      if (typeof body.owned[u.id] === 'number') {
+        state.owned[u.id] = Math.max(state.owned[u.id] || 0, Math.min(MAX_OWNED, body.owned[u.id]));
       }
-      if (body.perms && typeof body.perms === 'object') {
-        state.perms = state.perms || {};
-        for (const p of PERMANENT_UPGRADES) {
-          if (body.perms[p.id] === true) {
-            state.perms[p.id] = true;
-          }
+    }
+  }
+
+  // 3. Tecnologias Permanentes: Se qualquer nó ativou uma tecnologia, ela permanece ativa
+  if (body.perms && typeof body.perms === 'object') {
+    state.perms = state.perms || {};
+    for (const p of PERMANENT_UPGRADES) {
+      if (body.perms[p.id] === true) {
+        state.perms[p.id] = true;
+      }
+    }
+  }
         }
       }
       state.mps = calculateMps(state.owned, state.perms);

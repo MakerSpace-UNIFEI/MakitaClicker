@@ -843,33 +843,29 @@ function applyServerState(data) {
         return;
     }
 
-    // Servidor / Web é Master:
-    // Reconcilia makitas com base no servidor + cliques locais pendentes
+    // Reconciliação Monotônica (Ratchet / CRDT):
+    // 1. Saldo e Total: O saldo local só é atualizado se a soma do servidor for estritamente MAIOR que o local
     if (typeof data.makitas === 'number') {
         const localPendingClicksGain = pendingClicks * calculateLocalClickPower();
-        // Se a nuvem estiver com saldo maior OU se a diferença for pequena/drift de tempo, alinha com o servidor
-        if (data.makitas + localPendingClicksGain > makitas || Math.abs(data.makitas - makitas) < 200) {
-            makitas = data.makitas + localPendingClicksGain;
+        const serverEffective = data.makitas + localPendingClicksGain;
+        if (serverEffective > makitas) {
+            makitas = serverEffective;
         }
         if (typeof data.totalMakitasMade === 'number') {
             totalMakitasMade = Math.max(totalMakitasMade, data.totalMakitasMade);
         }
     }
 
-    // Upgrades da loja: adota do servidor, MAS NUNCA zera/rebaixa upgrades se o servidor responder com menos
+    // 2. Upgrades da loja: NUNCA perde upgrades. Mantém sempre o maior valor entre local e servidor.
     if (data.owned && typeof data.owned === 'object') {
-        const serverOwnedCount = Object.values(data.owned).reduce((a, b) => a + (Number(b) || 0), 0);
-        const localOwnedCount = Object.values(owned).reduce((a, b) => a + (Number(b) || 0), 0);
-        if (serverOwnedCount >= localOwnedCount) {
-            upgrades.forEach(upgrade => {
-                if (upgrade.id in data.owned) {
-                    owned[upgrade.id] = data.owned[upgrade.id];
-                }
-            });
-        }
+        upgrades.forEach(upgrade => {
+            if (typeof data.owned[upgrade.id] === 'number') {
+                owned[upgrade.id] = Math.max(owned[upgrade.id] || 0, data.owned[upgrade.id]);
+            }
+        });
     }
 
-    // Tecnologias permanentes: servidor sempre adiciona
+    // 3. Tecnologias permanentes: Se foi desbloqueada no servidor, ativa localmente
     if (data.perms && typeof data.perms === 'object') {
         permanentUpgrades.forEach(u => {
             if (u.id in data.perms && data.perms[u.id] === true) {
