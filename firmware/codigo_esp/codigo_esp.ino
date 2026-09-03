@@ -278,6 +278,8 @@ void atualizarLCD() {
       int totalOwned = 0;
       for (int i = 0; i < NUM_UPGRADES; i++) totalOwned += ownedUpgrades[i];
       printLinhaFormatada(3, "Oficinas: " + String(totalOwned) + " un.");
+    } else if (modoInfoLinha3 == 3) {
+      printLinhaFormatada(3, "FW: v" + String(CURRENT_FIRMWARE_VER) + " (OTA Ativo)");
     } else {
       printLinhaFormatada(3, " MakerSpace UNIFEI  ");
     }
@@ -640,6 +642,9 @@ void syncWithCloud() {
 
 void checkOTA() {
   Serial.println("[OTA] Verificando atualizacoes...");
+  if (lcd) {
+    printLinhaFormatada(3, "Checando OTA...");
+  }
 
   WiFiClientSecure client;
   client.setInsecure();
@@ -677,16 +682,23 @@ void checkOTA() {
 
   if (remoteVersion > CURRENT_FIRMWARE_VER && strlen(fwUrl) > 0) {
     if (lcd) {
+      lcd->clear();
       printLinhaFormatada(0, "====================");
-      printLinhaFormatada(1, " ATUALIZANDO FIRMWARE");
-      printLinhaFormatada(2, "      VIA OTA...    ");
-      printLinhaFormatada(3, "  Por favor, aguarde ");
+      printLinhaFormatada(1, "   ATUALIZANDO...   ");
+      printLinhaFormatada(2, " v" + String(CURRENT_FIRMWARE_VER) + " -> v" + String(remoteVersion));
+      printLinhaFormatada(3, ">> BAIXANDO OTA...<<");
     }
     client.stop();
     Serial.println("[OTA] Atualizando Firmware...");
     ESPhttpUpdate.rebootOnUpdate(true);
     t_httpUpdate_return ret = ESPhttpUpdate.update(client, fwUrl);
     Serial.printf("[OTA] Falha no FW update: %s\n", ESPhttpUpdate.getLastErrorString().c_str());
+
+    if (lcd) {
+      printLinhaFormatada(1, "  FALHA NO OTA!     ");
+      printLinhaFormatada(3, "Reiniciando em 2s...");
+      delay(2000);
+    }
   }
 }
 
@@ -792,7 +804,7 @@ void loop() {
   // 4. Rotação de informações da Linha 3 a cada 3.2s
   if (now - ultimoTickInfo >= 3200) {
     ultimoTickInfo = now;
-    modoInfoLinha3 = (modoInfoLinha3 + 1) % 4;
+    modoInfoLinha3 = (modoInfoLinha3 + 1) % 5;
     precisaAtualizarLCD = true;
   }
 
