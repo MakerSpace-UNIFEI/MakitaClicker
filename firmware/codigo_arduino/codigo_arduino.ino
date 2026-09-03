@@ -26,7 +26,7 @@ double makitasGlobal = 0.0;
 double mpsGlobal = 0.0;
 double clickPowerGlobal = 1.0;
 int totalOwnedGlobal = 0;
-String webInfo = "pages.dev";
+String webInfo = "makitaclicker.pages.dev";
 
 // Animação e feedback visual
 unsigned long ultimoClickVisual = 0;

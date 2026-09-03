@@ -295,7 +295,10 @@ void saveLocalGameState() {
   f.close();
 }
 
-// ===== SINCRONIZAÇÃO INTELIGENTE COM A NUVEM =====
+// ===== SINCRONIZAÇÃO COM A NUVEM (ESP = RECEIVER, SERVIDOR = MASTER) =====
+// Regra: servidor/web é sempre master para upgrades (owned/perms).
+// A ESP só envia makitas se for maior que o servidor, e os cliques pendentes.
+// Tudo mais (owned, perms, MPS) é sempre recebido e aplicado a partir do servidor.
 void syncWithCloud() {
   if (WiFi.status() != WL_CONNECTED) {
     return;
@@ -310,44 +313,17 @@ void syncWithCloud() {
 
   int clicksToSend = pendingPhysicalClicks;
 
-  // Monta pacote com o estado do ESP para resolução Master/Slave na nuvem:
-  // Se o ESP possuir saldo maior (ex: jogou offline), a nuvem aceitará o estado do ESP.
-  // Se a nuvem tiver saldo maior ou igual, a nuvem prevalece (master), somando os cliques pendentes.
+  // ESP envia apenas: source, makitas (para comparação), clicks pendentes.
+  // owned e perms NÃO são enviados — o servidor é master absoluto para upgrades.
 #if ARDUINOJSON_VERSION_MAJOR >= 7
   JsonDocument reqDoc;
 #else
-  DynamicJsonDocument reqDoc(2048);
+  DynamicJsonDocument reqDoc(256);
 #endif
   reqDoc["action"] = "sync";
+  reqDoc["source"] = "esp";          // Identifica origem como ESP
   reqDoc["clicks"] = clicksToSend;
-  reqDoc["makitas"] = makitas;
-
-  JsonObject reqOwned = reqDoc["owned"].to<JsonObject>();
-  for (int i = 0; i < NUM_UPGRADES; i++) {
-    reqOwned[UPGRADE_CONFIGS[i].id] = ownedUpgrades[i];
-  }
-
-  JsonObject reqPerms = reqDoc["perms"].to<JsonObject>();
-  reqPerms["perm_lubrificante"] = permLubrificante;
-  reqPerms["perm_disco_diamante"] = permDiscoDiamante;
-  reqPerms["perm_motor_brushless"] = permMotorBrushless;
-  reqPerms["perm_empunhadura"] = permEmpunhadura;
-  reqPerms["perm_bateria_litio"] = permBateriaLitio;
-  reqPerms["perm_ia_maker"] = permIaMaker;
-  reqPerms["perm_refrigeracao"] = permRefrigeracao;
-  reqPerms["perm_titanio"] = permTitanio;
-  reqPerms["perm_overclock"] = permOverclock;
-  reqPerms["perm_nanobots"] = permNanobots;
-  reqPerms["perm_singularidade"] = permSingularidade;
-  reqPerms["perm_plasma_cutter"] = permPlasmaCutter;
-  reqPerms["perm_fusao_fria"] = permFusaoFria;
-  reqPerms["perm_hiperconducao"] = permHiperconducao;
-  reqPerms["perm_sinergia_quantica"] = permSinergiaQuantica;
-  reqPerms["perm_laser_gama"] = permLaserGama;
-  reqPerms["perm_taquions"] = permTaquions;
-  reqPerms["perm_materia_escura"] = permMateriaEscura;
-  reqPerms["perm_hiper_clique"] = permHiperClique;
-  reqPerms["perm_onipotencia_maker"] = permOnipotenciaMaker;
+  reqDoc["makitas"] = makitas;       // Servidor aceita SOMENTE se for maior
 
   String reqBody;
   serializeJson(reqDoc, reqBody);
@@ -364,6 +340,7 @@ void syncWithCloud() {
     DeserializationError err = deserializeJson(doc, responsePayload);
 
     if (!err) {
+      // Servidor é MASTER: sempre aplica o estado recebido
       if (doc.containsKey("makitas")) {
         makitas = doc["makitas"].as<double>();
       }
@@ -372,6 +349,7 @@ void syncWithCloud() {
       pendingPhysicalClicks -= clicksToSend;
       if (pendingPhysicalClicks < 0) pendingPhysicalClicks = 0;
 
+      // Sempre aplica owned do servidor (master absoluto)
       if (doc.containsKey("owned")) {
         JsonObject ownedObj = doc["owned"].as<JsonObject>();
         for (int i = 0; i < NUM_UPGRADES; i++) {
@@ -381,6 +359,7 @@ void syncWithCloud() {
         }
       }
 
+      // Sempre aplica perms do servidor (master absoluto)
       if (doc.containsKey("perms")) {
         JsonObject permsObj = doc["perms"].as<JsonObject>();
         permLubrificante = permsObj["perm_lubrificante"] | false;
@@ -536,8 +515,8 @@ unsigned long lastTick = 0;
 unsigned long lastMegaUpdate = 0;
 unsigned long lastCloudSync = 0;
 unsigned long lastLocalSave = 0;
-const unsigned long CLOUD_SYNC_INTERVAL_MS = 30000; // Sincronização a cada 30 segundos
-const unsigned long LOCAL_SAVE_INTERVAL_MS = 15000; // Autosave na flash a cada 15 segundos
+const unsigned long CLOUD_SYNC_INTERVAL_MS = 10000; // Sincronização a cada 10 segundos
+const unsigned long LOCAL_SAVE_INTERVAL_MS = 10000; // Autosave na flash a cada 10 segundos
 
 void loop() {
   unsigned long now = millis();

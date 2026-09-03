@@ -944,10 +944,10 @@ async function syncWithCloud(actionPayload = null) {
     }
 }
 
-// Sincronização periódica a cada 3 segundos em segundo plano
+// Sincronização periódica a cada 10 segundos em segundo plano
 setInterval(() => {
     syncWithCloud();
-}, 3000);
+}, 10000);
 
 // Envio seguro ao trocar de aba ou fechar o navegador
 window.addEventListener('beforeunload', () => {

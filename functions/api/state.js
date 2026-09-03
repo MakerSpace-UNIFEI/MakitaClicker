@@ -238,16 +238,19 @@ export async function onRequestPost(context) {
     });
   }
 
-  // Sincronização inteligente (Master/Slave):
-  // - Se cliente (ESP ou Web) enviar saldo maior que o Cloud: o cliente atualiza a nuvem.
-  // - Se a nuvem tiver saldo maior ou igual: a nuvem prevalece (master), somando cliques pendentes.
+  // Sincronização (Servidor MASTER):
+  // - Servidor é sempre autoritativo para owned/perms (upgrades).
+  // - ESP: única exceção permitida é se o contador de makitas for maior; nesse caso apenas
+  //   o saldo é aceito, mas owned/perms NUNCA são sobrescritos pelo cliente via sync.
+  // - Web (buy/perm_buy): usa fluxo próprio de ações abaixo.
   if (action === 'sync' || action === 'click') {
     const clientMakitas = typeof body.makitas === 'number' ? body.makitas : null;
     const clientTotal = typeof body.totalMakitasMade === 'number' ? body.totalMakitasMade : null;
     const clicks = Math.max(0, Math.min(parseInt(body.clicks || body.count || 0, 10), 5000));
+    const isEsp = body.source === 'esp'; // ESP deve enviar source:"esp" para identificação
 
-    // O cliente possui maior progresso (ex: jogou offline ou acumulou mais)?
     if (clientMakitas !== null && clientMakitas > state.makitas) {
+      // Cliente tem saldo maior: aceita apenas o contador de makitas
       state.makitas = clientMakitas;
       if (clientTotal && clientTotal > (state.totalMakitasMade || 0)) {
         state.totalMakitasMade = clientTotal;
@@ -255,27 +258,10 @@ export async function onRequestPost(context) {
         state.totalMakitasMade = state.makitas;
       }
 
-      // Adota upgrades do cliente se fornecidos
-      if (body.owned && typeof body.owned === 'object') {
-        state.owned = state.owned || {};
-        for (const u of UPGRADES) {
-          if (typeof body.owned[u.id] === 'number') {
-            state.owned[u.id] = Math.max(state.owned[u.id] || 0, Math.min(MAX_OWNED, body.owned[u.id]));
-          }
-        }
-      }
-
-      // Adota melhorias permanentes do cliente
-      if (body.perms && typeof body.perms === 'object') {
-        state.perms = state.perms || {};
-        for (const p of PERMANENT_UPGRADES) {
-          if (body.perms[p.id] === true) {
-            state.perms[p.id] = true;
-          }
-        }
-      }
+      // owned e perms: NUNCA sobrescritos via sync — servidor é sempre master
+      // (compras só ocorrem via action:'buy' e 'perm_buy')
     } else {
-      // Nuvem é MASTER e tem saldo superior ou igual: soma os cliques pendentes enviados
+      // Servidor é MASTER: soma cliques físicos pendentes (ESP) sobre o estado da nuvem
       if (clicks > 0) {
         const gainPerClick = getSingleClickGain(state.perms, state.mps);
         const totalGain = gainPerClick * clicks;
