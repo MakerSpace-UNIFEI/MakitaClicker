@@ -577,9 +577,18 @@ void loop() {
     saveLocalGameState();
   }
 
-  // 6. Sincronização periódica com a Nuvem (Cloudflare Pages & KV) a cada 30 segundos
+  // 6. Sincronização periódica com a Nuvem (Cloudflare Pages & KV) a cada 5 segundos
   if (now - lastCloudSync >= CLOUD_SYNC_INTERVAL_MS) {
     lastCloudSync = now;
     syncWithCloud();
+  }
+
+  // 7. Verificação periódica de OTA a cada 5 minutos (auto-update sem necessidade de reset manual)
+  static unsigned long lastOtaCheck = 0;
+  if (now - lastOtaCheck >= 300000) {
+    lastOtaCheck = now;
+    if (WiFi.status() == WL_CONNECTED) {
+      checkOTA();
+    }
   }
 }
