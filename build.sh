@@ -32,7 +32,7 @@ arduino-cli core update-index
 arduino-cli core install esp8266:esp8266
 
 echo "=== [3/3] Instalando Bibliotecas ESP ==="
-arduino-cli lib install "ArduinoJson"
+arduino-cli lib install "ArduinoJson" "LiquidCrystal I2C"
 
 mkdir -p online
 
