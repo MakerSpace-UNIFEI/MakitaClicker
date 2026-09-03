@@ -33,6 +33,7 @@
         <div class="center-nav">
             <button class="navbtn is-active" id="tabBtnPerm" data-tab="tab-perm">Melhorias Permanentes</button>
             <button class="navbtn" id="tabBtnStats" data-tab="tab-stats">Estatísticas</button>
+            <button class="navbtn" id="tabBtnStatus" data-tab="tab-status">📡 Status & Hardware</button>
         </div>
         <div class="center-log" id="log">Conectando à Nuvem (Cloudflare Pages & KV)...</div>
         <div class="center-body stripes">
@@ -86,6 +87,85 @@
                     <button id="resetGameBtn" class="btn-reset">
                         ⚠️ Resetar Todo o Progresso
                     </button>
+                </div>
+            </div>
+
+            <!-- Aba 3: Status & Telemetria do Hardware -->
+            <div class="tab-pane" id="tab-status">
+                <div class="perm-tree-header">
+                    <h3 class="perm-tree-title">📡 Telemetria & Status do Hardware</h3>
+                    <p class="perm-tree-subtitle">Monitoramento em tempo real do microcontrolador ESP8266, versões de software e conexão com a nuvem.</p>
+                </div>
+
+                <!-- Hero Card: Estado Geral da ESP8266 -->
+                <div class="status-hero" id="statusHero">
+                    <div class="status-hero__indicator">
+                        <span class="status-dot" id="statusDot"></span>
+                        <div class="status-hero__info">
+                            <span class="status-hero__title" id="statusEspTitle">ESP8266: Aguardando telemetria...</span>
+                            <span class="status-hero__subtitle" id="statusEspSubtitle">Nenhum sinal recebido ainda</span>
+                        </div>
+                    </div>
+                    <button class="status-hero__btn" id="btnTestPing">🔄 Atualizar Agora</button>
+                </div>
+
+                <!-- Grid de Métricas de Telemetria -->
+                <div class="stats-grid">
+                    <!-- Card 1: Firmware Remoto -->
+                    <div class="stat-card">
+                        <div class="stat-card__label">Versão Remota (Cloudflare)</div>
+                        <div class="stat-card__val" id="statRemoteFw">v--</div>
+                        <div class="stat-card__hint" id="statRemoteFwHint">Manifesto version.json</div>
+                    </div>
+
+                    <!-- Card 2: Firmware Local na ESP -->
+                    <div class="stat-card">
+                        <div class="stat-card__label">Versão na ESP8266</div>
+                        <div class="stat-card__val" id="statLocalFw">v--</div>
+                        <div class="stat-card__hint" id="statFwSyncBadge">Aguardando telemetria</div>
+                    </div>
+
+                    <!-- Card 3: Ping / Latência Web ↔ Servidor -->
+                    <div class="stat-card">
+                        <div class="stat-card__label">Latência HTTP (Ping)</div>
+                        <div class="stat-card__val" id="statPing">-- ms</div>
+                        <div class="stat-card__hint" id="statPingHint">Medido a cada ciclo</div>
+                    </div>
+
+                    <!-- Card 4: Sinal Wi-Fi da ESP -->
+                    <div class="stat-card">
+                        <div class="stat-card__label">Sinal Wi-Fi (ESP RSSI)</div>
+                        <div class="stat-card__val" id="statRssi">-- dBm</div>
+                        <div class="stat-card__hint" id="statRssiQuality">--</div>
+                    </div>
+
+                    <!-- Card 5: IP Local da ESP -->
+                    <div class="stat-card">
+                        <div class="stat-card__label">IP Local da ESP</div>
+                        <div class="stat-card__val" id="statEspIp" style="font-size: 1.05rem;">--</div>
+                        <div class="stat-card__hint">Rede MakerSpace UNIFEI</div>
+                    </div>
+
+                    <!-- Card 6: Uptime da ESP -->
+                    <div class="stat-card">
+                        <div class="stat-card__label">Tempo de Atividade (Uptime)</div>
+                        <div class="stat-card__val" id="statEspUptime">--</div>
+                        <div class="stat-card__hint" id="statEspHeap">RAM Livre: --</div>
+                    </div>
+
+                    <!-- Card 7: Banco de Dados Cloudflare KV -->
+                    <div class="stat-card">
+                        <div class="stat-card__label">Cloudflare KV Database</div>
+                        <div class="stat-card__val" id="statKvStatus" style="font-size: 1rem;">Verificando...</div>
+                        <div class="stat-card__hint" id="statKvBinding">Binding: --</div>
+                    </div>
+
+                    <!-- Card 8: Ordem de Reset Remoto -->
+                    <div class="stat-card">
+                        <div class="stat-card__label">Ordem de Reset Remoto</div>
+                        <div class="stat-card__val" id="statResetOrder" style="font-size: 1rem; color: var(--text-lo);">Nenhuma</div>
+                        <div class="stat-card__hint" id="statResetAck">Status de sincronismo</div>
+                    </div>
                 </div>
             </div>
         </div>

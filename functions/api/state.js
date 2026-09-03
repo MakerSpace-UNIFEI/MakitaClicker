@@ -86,6 +86,7 @@ function getDefaultState() {
     resetId: 0,
     resetPendingEsp: false,
     lastResetAckAt: 0,
+    espTelemetry: null,
     lastUpdate: Date.now()
   };
 }
@@ -293,6 +294,18 @@ export async function onRequestPost(context) {
       state.lastResetAckAt = now;
       espAckReceived = true;
     }
+  }
+
+  // Telemetria reportada pela ESP8266
+  if (isEsp) {
+    state.espTelemetry = {
+      lastPing: now,
+      fwVersion: typeof body.fwVersion === 'number' ? body.fwVersion : (state.espTelemetry?.fwVersion || 0),
+      ip: typeof body.ip === 'string' ? body.ip : (state.espTelemetry?.ip || 'desconhecido'),
+      rssi: typeof body.rssi === 'number' ? body.rssi : (state.espTelemetry?.rssi || null),
+      uptime: typeof body.uptime === 'number' ? body.uptime : (state.espTelemetry?.uptime || 0),
+      freeHeap: typeof body.freeHeap === 'number' ? body.freeHeap : (state.espTelemetry?.freeHeap || 0)
+    };
   }
 
   // RECONCILIAÇÃO MONOTÔNICA E CONVERGÊNCIA (CRDT / RATCHET):

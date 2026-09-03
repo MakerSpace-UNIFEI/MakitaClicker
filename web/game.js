@@ -896,8 +896,237 @@ function applyServerState(data) {
         }
     }
 
+    latestServerData = data;
     isDirty = true;
     saveLocalState();
+    updateStatusUI();
+}
+
+// ---------- TELEMETRIA E STATUS DA ESP8266 & CLOUD ----------
+let remoteFirmwareVersion = null;
+let measuredPingMs = null;
+let latestServerData = null;
+
+async function fetchRemoteVersion() {
+    try {
+        const res = await fetch('/version.json?t=' + Date.now());
+        if (res.ok) {
+            const data = await res.json();
+            if (typeof data.firmware_version === 'number') {
+                remoteFirmwareVersion = data.firmware_version;
+            }
+        }
+    } catch (e) {
+        console.warn('Erro ao consultar version.json:', e);
+    }
+    updateStatusUI();
+}
+
+function formatUptime(seconds) {
+    if (!seconds || seconds <= 0) return '0s';
+    const d = Math.floor(seconds / 86400);
+    const h = Math.floor((seconds % 86400) / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    const parts = [];
+    if (d > 0) parts.push(`${d}d`);
+    if (h > 0) parts.push(`${h}h`);
+    if (m > 0) parts.push(`${m}m`);
+    if (s > 0 || parts.length === 0) parts.push(`${s}s`);
+    return parts.join(' ');
+}
+
+function updateStatusUI() {
+    // 1. Firmware Remoto
+    const statRemoteFw = document.getElementById('statRemoteFw');
+    if (statRemoteFw) {
+        statRemoteFw.textContent = remoteFirmwareVersion !== null ? `v${remoteFirmwareVersion}` : 'Consultando...';
+    }
+
+    // Telemetria da ESP recebida pelo backend
+    const esp = latestServerData?.espTelemetry;
+    const now = Date.now();
+    const espLastPing = esp?.lastPing || 0;
+    const secondsSinceEsp = espLastPing > 0 ? Math.max(0, Math.round((now - espLastPing) / 1000)) : null;
+
+    // 2. Hero Card & Indicador de Status da ESP8266
+    const statusDot = document.getElementById('statusDot');
+    const statusEspTitle = document.getElementById('statusEspTitle');
+    const statusEspSubtitle = document.getElementById('statusEspSubtitle');
+
+    if (statusDot && statusEspTitle && statusEspSubtitle) {
+        if (secondsSinceEsp !== null && secondsSinceEsp < 90) {
+            statusDot.style.background = 'var(--green)';
+            statusDot.style.boxShadow = '0 0 10px rgba(0, 230, 118, 0.6)';
+            statusDot.style.animation = 'pulseGreen 2s infinite';
+            statusEspTitle.textContent = 'ESP8266 Conectada & Sincronizada';
+            statusEspTitle.style.color = 'var(--green)';
+            statusEspSubtitle.textContent = `Último contato há ${secondsSinceEsp}s • IP: ${esp.ip || 'desconhecido'}`;
+        } else if (secondsSinceEsp !== null && secondsSinceEsp < 300) {
+            statusDot.style.background = 'var(--orange)';
+            statusDot.style.boxShadow = '0 0 10px rgba(255, 145, 0, 0.6)';
+            statusDot.style.animation = 'pulseOrange 2s infinite';
+            statusEspTitle.textContent = 'ESP8266 Sem Sinal Recente';
+            statusEspTitle.style.color = 'var(--orange)';
+            statusEspSubtitle.textContent = `Último contato há ${Math.round(secondsSinceEsp / 60)} min`;
+        } else {
+            statusDot.style.background = 'var(--text-lo)';
+            statusDot.style.boxShadow = 'none';
+            statusDot.style.animation = 'none';
+            statusEspTitle.textContent = 'ESP8266 Offline / Aguardando';
+            statusEspTitle.style.color = 'var(--text-lo)';
+            statusEspSubtitle.textContent = secondsSinceEsp !== null ? `Visto há ${Math.round(secondsSinceEsp / 60)} min` : 'Nenhum sinal recebido';
+        }
+    }
+
+    // 3. Versão Local na ESP e Comparação com a Nuvem
+    const statLocalFw = document.getElementById('statLocalFw');
+    const statFwSyncBadge = document.getElementById('statFwSyncBadge');
+    if (statLocalFw && statFwSyncBadge) {
+        if (esp && typeof esp.fwVersion === 'number' && esp.fwVersion > 0) {
+            statLocalFw.textContent = `v${esp.fwVersion}`;
+            if (remoteFirmwareVersion !== null) {
+                if (esp.fwVersion >= remoteFirmwareVersion) {
+                    statFwSyncBadge.textContent = '✅ Atualizado com a nuvem';
+                    statFwSyncBadge.style.color = 'var(--green)';
+                } else {
+                    statFwSyncBadge.textContent = `⚠️ OTA Pendente (Nuvem: v${remoteFirmwareVersion})`;
+                    statFwSyncBadge.style.color = 'var(--orange)';
+                }
+            } else {
+                statFwSyncBadge.textContent = 'Versão reportada via telemetria';
+                statFwSyncBadge.style.color = 'var(--text-lo)';
+            }
+        } else {
+            statLocalFw.textContent = 'v--';
+            statFwSyncBadge.textContent = 'Aguardando telemetria da ESP';
+            statFwSyncBadge.style.color = 'var(--text-lo)';
+        }
+    }
+
+    // 4. Ping / Latência Web ↔ Servidor Cloudflare
+    const statPing = document.getElementById('statPing');
+    const statPingHint = document.getElementById('statPingHint');
+    if (statPing && statPingHint) {
+        if (measuredPingMs !== null) {
+            statPing.textContent = `${measuredPingMs} ms`;
+            if (measuredPingMs < 120) {
+                statPing.style.color = 'var(--green)';
+                statPingHint.textContent = '⚡ Latência excelente (< 120ms)';
+                statPingHint.style.color = 'var(--green)';
+            } else if (measuredPingMs < 350) {
+                statPing.style.color = 'var(--accent)';
+                statPingHint.textContent = '🟢 Latência estável (< 350ms)';
+                statPingHint.style.color = 'var(--accent)';
+            } else {
+                statPing.style.color = 'var(--orange)';
+                statPingHint.textContent = '🟡 Latência elevada';
+                statPingHint.style.color = 'var(--orange)';
+            }
+        } else {
+            statPing.textContent = '-- ms';
+            statPing.style.color = 'var(--text-hi)';
+            statPingHint.textContent = 'Medido a cada ciclo de sync';
+            statPingHint.style.color = 'var(--text-lo)';
+        }
+    }
+
+    // 5. Sinal Wi-Fi (ESP RSSI)
+    const statRssi = document.getElementById('statRssi');
+    const statRssiQuality = document.getElementById('statRssiQuality');
+    if (statRssi && statRssiQuality) {
+        if (esp && typeof esp.rssi === 'number' && esp.rssi !== 0) {
+            statRssi.textContent = `${esp.rssi} dBm`;
+            if (esp.rssi >= -60) {
+                statRssi.style.color = 'var(--green)';
+                statRssiQuality.textContent = '🟢 Excelente (> -60 dBm)';
+                statRssiQuality.style.color = 'var(--green)';
+            } else if (esp.rssi >= -70) {
+                statRssi.style.color = 'var(--accent)';
+                statRssiQuality.textContent = '🟡 Bom (-60 a -70 dBm)';
+                statRssiQuality.style.color = 'var(--accent)';
+            } else if (esp.rssi >= -80) {
+                statRssi.style.color = 'var(--orange)';
+                statRssiQuality.textContent = '🟠 Regular (-70 a -80 dBm)';
+                statRssiQuality.style.color = 'var(--orange)';
+            } else {
+                statRssi.style.color = 'var(--red)';
+                statRssiQuality.textContent = '🔴 Sinal fraco (< -80 dBm)';
+                statRssiQuality.style.color = 'var(--red)';
+            }
+        } else {
+            statRssi.textContent = '-- dBm';
+            statRssi.style.color = 'var(--text-hi)';
+            statRssiQuality.textContent = 'Aguardando telemetria';
+            statRssiQuality.style.color = 'var(--text-lo)';
+        }
+    }
+
+    // 6. IP Local da ESP
+    const statEspIp = document.getElementById('statEspIp');
+    if (statEspIp) {
+        statEspIp.textContent = (esp && esp.ip) ? esp.ip : '--';
+    }
+
+    // 7. Uptime & RAM Heap da ESP
+    const statEspUptime = document.getElementById('statEspUptime');
+    const statEspHeap = document.getElementById('statEspHeap');
+    if (statEspUptime) {
+        statEspUptime.textContent = (esp && esp.uptime) ? formatUptime(esp.uptime) : '--';
+    }
+    if (statEspHeap) {
+        if (esp && typeof esp.freeHeap === 'number' && esp.freeHeap > 0) {
+            statEspHeap.textContent = `RAM Livre: ${(esp.freeHeap / 1024).toFixed(1)} KB`;
+        } else {
+            statEspHeap.textContent = 'RAM Livre: --';
+        }
+    }
+
+    // 8. Cloudflare KV Database
+    const statKvStatus = document.getElementById('statKvStatus');
+    const statKvBinding = document.getElementById('statKvBinding');
+    if (statKvStatus && statKvBinding) {
+        if (latestServerData) {
+            if (latestServerData._kv_connected) {
+                statKvStatus.textContent = '🟢 Conectado e Persistente';
+                statKvStatus.style.color = 'var(--green)';
+                statKvBinding.textContent = `Binding: ${latestServerData._kv_binding || 'MAKITA_KV'}`;
+            } else {
+                statKvStatus.textContent = '🟡 Memória Volátil (Sem KV)';
+                statKvStatus.style.color = 'var(--orange)';
+                statKvBinding.textContent = 'Binding ausente no Cloudflare';
+            }
+        }
+    }
+
+    // 9. Ordem de Reset Remoto
+    const statResetOrder = document.getElementById('statResetOrder');
+    const statResetAck = document.getElementById('statResetAck');
+    if (statResetOrder && statResetAck) {
+        if (latestServerData?.resetOrder) {
+            statResetOrder.textContent = '⚠️ Ordem Ativa (Pendente)';
+            statResetOrder.style.color = 'var(--orange)';
+            statResetAck.textContent = 'Aguardando microcontrolador executar reset';
+            statResetAck.style.color = 'var(--orange)';
+        } else {
+            statResetOrder.textContent = '✅ Normal / Sincronizado';
+            statResetOrder.style.color = 'var(--green)';
+            statResetAck.textContent = 'Nenhuma ordem de reset pendente';
+            statResetAck.style.color = 'var(--text-lo)';
+        }
+    }
+}
+
+const btnTestPing = document.getElementById('btnTestPing');
+if (btnTestPing) {
+    btnTestPing.addEventListener('click', async () => {
+        btnTestPing.disabled = true;
+        const prevText = btnTestPing.textContent;
+        btnTestPing.textContent = '🔄 Medindo...';
+        await Promise.all([syncWithCloud(), fetchRemoteVersion()]);
+        btnTestPing.textContent = prevText;
+        btnTestPing.disabled = false;
+    });
 }
 
 async function syncWithCloud(actionPayload = null) {
@@ -941,6 +1170,7 @@ async function syncWithCloud(actionPayload = null) {
         };
     }
 
+    const pingStart = performance.now();
     try {
         const res = await fetch('/api/state', {
             method: 'POST',
@@ -949,15 +1179,18 @@ async function syncWithCloud(actionPayload = null) {
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
+        measuredPingMs = Math.round(performance.now() - pingStart);
         const data = await res.json();
         applyServerState(data);
     } catch (err) {
+        measuredPingMs = null;
         // Recupera cliques caso falhe o envio
         pendingClicks += clicksSent;
         logEl.textContent = '⚠️ Modo autônomo local (aguardando conexão com a nuvem)';
         logEl.style.color = 'var(--orange)';
     } finally {
         isSyncing = false;
+        updateStatusUI();
     }
 }
 
@@ -1035,6 +1268,12 @@ buildShopList();
 buildPermTree();
 renderUI();
 syncWithCloud();
+fetchRemoteVersion();
+
+// Intervalos periódicos de telemetria e diagnóstico
+setInterval(fetchRemoteVersion, 60000); // Consulta nova versão remota a cada 1 minuto
+setInterval(updateStatusUI, 1000);      // Atualiza contadores e tempos relativos a cada segundo
 
 // Inicia o motor gráfico suave a 60 FPS
 requestAnimationFrame(gameLoop);
+

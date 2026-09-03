@@ -485,12 +485,17 @@ void syncWithCloud() {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
   JsonDocument reqDoc;
 #else
-  DynamicJsonDocument reqDoc(256);
+  DynamicJsonDocument reqDoc(512);
 #endif
   reqDoc["action"] = "sync";
   reqDoc["source"] = "esp";          // Identifica origem como ESP
   reqDoc["clicks"] = clicksToSend;
   reqDoc["makitas"] = makitas;
+  reqDoc["fwVersion"] = CURRENT_FIRMWARE_VER;
+  reqDoc["ip"] = WiFi.localIP().toString();
+  reqDoc["rssi"] = WiFi.RSSI();
+  reqDoc["uptime"] = (unsigned long)(millis() / 1000);
+  reqDoc["freeHeap"] = ESP.getFreeHeap();
 
   // Envia check de confirmação caso a ESP tenha limpado sua memória
   if (hasPendingResetAck) {

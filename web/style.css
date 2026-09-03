@@ -775,3 +775,104 @@ button:focus-visible {
 @media (prefers-reduced-motion: reduce) {
     .float-plus { animation: none; opacity: 0; }
 }
+
+/* ===== Aba de Status & Telemetria do Hardware ===== */
+.status-hero {
+    background: var(--panel-alt);
+    border: 1px solid var(--panel-edge);
+    border-radius: 8px;
+    padding: 1.1rem 1.3rem;
+    margin-bottom: 1.25rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.status-hero__indicator {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.status-dot {
+    width: 14px;
+    height: 14px;
+    min-width: 14px;
+    min-height: 14px;
+    border-radius: 50%;
+    background: var(--text-faint);
+    display: inline-block;
+    transition: background 0.3s ease, box-shadow 0.3s ease;
+}
+
+.status-dot.is-online {
+    background: #4caf50;
+    box-shadow: 0 0 10px #4caf50;
+    animation: pulseGreen 2s infinite;
+}
+
+.status-dot.is-warn {
+    background: var(--orange);
+    box-shadow: 0 0 10px var(--orange);
+    animation: pulseOrange 2s infinite;
+}
+
+.status-dot.is-offline {
+    background: var(--red);
+    box-shadow: 0 0 10px var(--red);
+}
+
+@keyframes pulseGreen {
+    0% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.7); }
+    70% { box-shadow: 0 0 0 10px rgba(76, 175, 80, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0); }
+}
+
+@keyframes pulseOrange {
+    0% { box-shadow: 0 0 0 0 rgba(255, 143, 67, 0.7); }
+    70% { box-shadow: 0 0 0 10px rgba(255, 143, 67, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(255, 143, 67, 0); }
+}
+
+.status-hero__title {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--text-hi);
+    display: block;
+}
+
+.status-hero__subtitle {
+    font-size: 0.75rem;
+    color: var(--text-lo);
+    font-family: var(--mono);
+    display: block;
+    margin-top: 0.2rem;
+}
+
+.status-hero__btn {
+    background: var(--panel);
+    border: 1px solid var(--panel-edge);
+    color: var(--orange);
+    padding: 0.55rem 0.95rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+    white-space: nowrap;
+}
+
+.status-hero__btn:hover {
+    background: var(--panel-edge);
+    border-color: var(--orange);
+    color: var(--text-hi);
+}
+
+.stat-card__hint {
+    font-size: 0.68rem;
+    color: var(--text-faint);
+    margin-top: 0.35rem;
+    font-family: var(--mono);
+}
