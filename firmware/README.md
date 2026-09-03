@@ -32,7 +32,7 @@ firmware/
 
 ### Arduino Mega (`codigo_arduino/codigo_arduino.ino`)
 
-- **Debounce de 25ms:** Leitura confiável de 2 botões físicos (Pino 7 e Pino 6) imune a ruídos mecânicos de microswitches.
+- **Debounce de 25ms:** Leitura confiável do botão simples no Pino 7 (`INPUT_PULLUP`, fechando para o GND) imune a ruídos mecânicos.
 - **Resposta instantânea (0ms):** Incrementa saldo local imediatamente e dispara `CLICK\n` pela Serial (38400 baud).
 - **Double-Buffering no LCD 20×4:** Auto-detecção I2C e reescrita seletiva apenas das linhas cujo texto ou animação foi alterado, eliminando completamente cintilações e sobrecarga no barramento I2C.
 

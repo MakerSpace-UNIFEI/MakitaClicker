@@ -4,19 +4,15 @@
 
 #define GAME_BAUD_RATE 38400
 
-// Configuração de 2 Entradas de Clique Separadas e Independentes
-const int PIN_BOTAO_1 = 7; // Input 1 (ex: Pino 7 / Normal Aberto)
-const int PIN_BOTAO_2 = 6; // Input 2 (ex: Pino 6 / Normal Fechado)
+// Configuração do Botão Físico
+const int PIN_BOTAO = 7; // Botão simples no Pino 7 (INPUT_PULLUP / fecha no GND)
 
 // Ponteiro dinâmico para o LCD (permite auto-detecção de endereço I2C: 0x27, 0x3F, etc.)
 LiquidCrystal_I2C* lcd = nullptr;
 
-// Detecção de borda independente para cada entrada (resposta instantânea)
-bool estadoAnterior1 = HIGH;
-unsigned long ultimoTempo1 = 0;
-
-bool estadoAnterior2 = HIGH;
-unsigned long ultimoTempo2 = 0;
+// Detecção de borda com debounce (resposta instantânea)
+bool estadoAnterior = HIGH;
+unsigned long ultimoTempoBotao = 0;
 
 const unsigned long DEBOUNCE_MS = 25; // Filtro de 25ms para botões mecânicos e microswitches
 
@@ -369,8 +365,7 @@ void processarSerialRecebida() {
 }
 
 void setup() {
-  pinMode(PIN_BOTAO_1, INPUT_PULLUP);
-  pinMode(PIN_BOTAO_2, INPUT_PULLUP);
+  pinMode(PIN_BOTAO, INPUT_PULLUP);
 
   // Comunicação Serial0 com ESP8266 a 38400 baud (estável e sem perda de pacotes)
   Serial.begin(GAME_BAUD_RATE);
@@ -410,28 +405,17 @@ void setup() {
 void loop() {
   unsigned long now = millis();
 
-  // 1. Leitura de 2 Entradas de Clique Separadas e Independentes (Pino 7 e Pino 6)
-  bool l1 = digitalRead(PIN_BOTAO_1);
-  if (l1 == LOW && estadoAnterior1 == HIGH && (now - ultimoTempo1 > DEBOUNCE_MS)) {
-    ultimoTempo1 = now;
+  // 1. Leitura do Botão Físico no Pino 7 (disparo instantâneo no fechamento para GND)
+  bool leitura = digitalRead(PIN_BOTAO);
+  if (leitura == LOW && estadoAnterior == HIGH && (now - ultimoTempoBotao > DEBOUNCE_MS)) {
+    ultimoTempoBotao = now;
     Serial.println("CLICK");
     makitasGlobal += clickPowerGlobal;
     ultimoClickVisual = now;
     frameAnimacao = (frameAnimacao + 1) % 4;
     precisaAtualizarLCD = true;
   }
-  estadoAnterior1 = l1;
-
-  bool l2 = digitalRead(PIN_BOTAO_2);
-  if (l2 == LOW && estadoAnterior2 == HIGH && (now - ultimoTempo2 > DEBOUNCE_MS)) {
-    ultimoTempo2 = now;
-    Serial.println("CLICK");
-    makitasGlobal += clickPowerGlobal;
-    ultimoClickVisual = now;
-    frameAnimacao = (frameAnimacao + 1) % 4;
-    precisaAtualizarLCD = true;
-  }
-  estadoAnterior2 = l2;
+  estadoAnterior = leitura;
 
   // 2. Processa pacotes seriais do ESP8266 de forma 100% não-bloqueante
   processarSerialRecebida();
