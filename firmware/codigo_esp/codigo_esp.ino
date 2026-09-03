@@ -533,8 +533,8 @@ unsigned long lastTick = 0;
 unsigned long lastMegaUpdate = 0;
 unsigned long lastCloudSync = 0;
 unsigned long lastLocalSave = 0;
-const unsigned long CLOUD_SYNC_INTERVAL_MS = 10000; // Sincronização a cada 10 segundos
-const unsigned long LOCAL_SAVE_INTERVAL_MS = 10000; // Autosave na flash a cada 10 segundos
+const unsigned long CLOUD_SYNC_INTERVAL_MS = 5000;  // Sincronização a cada 5 segundos
+const unsigned long LOCAL_SAVE_INTERVAL_MS = 15000; // Autosave na flash a cada 15 segundos
 
 void loop() {
   unsigned long now = millis();
