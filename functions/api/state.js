@@ -335,12 +335,9 @@ export async function onRequestPost(context) {
       }
     }
   }
-        }
-      }
-      state.mps = calculateMps(state.owned, state.perms);
-      state.clickPower = calculateClickPower(state.perms);
-    }
-  }
+
+  state.mps = calculateMps(state.owned, state.perms);
+  state.clickPower = calculateClickPower(state.perms);
 
   // AÇÕES DE COMPRA (Web Master para Upgrades):
   if (action === 'buy') {
