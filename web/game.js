@@ -843,39 +843,56 @@ function applyServerState(data) {
         return;
     }
 
+    // Servidor / Web é Master:
+    // Reconcilia makitas com base no servidor + cliques locais pendentes
     if (typeof data.makitas === 'number') {
-        const localPendingGain = pendingClicks * calculateLocalClickPower();
-        // A nuvem é o MASTER: se os dados oficiais da nuvem chegaram, reconcilia
-        if (data.makitas + localPendingGain > makitas) {
-            totalMakitasMade += ((data.makitas + localPendingGain) - makitas);
-            makitas = data.makitas + localPendingGain;
-        } else if (Math.abs(data.makitas - makitas) > 200) {
-            makitas = data.makitas + localPendingGain;
+        const localPendingClicksGain = pendingClicks * calculateLocalClickPower();
+        // Se a nuvem estiver com saldo maior OU se a diferença for pequena/drift de tempo, alinha com o servidor
+        if (data.makitas + localPendingClicksGain > makitas || Math.abs(data.makitas - makitas) < 200) {
+            makitas = data.makitas + localPendingClicksGain;
+        }
+        if (typeof data.totalMakitasMade === 'number') {
+            totalMakitasMade = Math.max(totalMakitasMade, data.totalMakitasMade);
         }
     }
-    
+
+    // Upgrades da loja: adota do servidor, MAS NUNCA zera/rebaixa upgrades se o servidor responder com menos
+    if (data.owned && typeof data.owned === 'object') {
+        const serverOwnedCount = Object.values(data.owned).reduce((a, b) => a + (Number(b) || 0), 0);
+        const localOwnedCount = Object.values(owned).reduce((a, b) => a + (Number(b) || 0), 0);
+        if (serverOwnedCount >= localOwnedCount) {
+            upgrades.forEach(upgrade => {
+                if (upgrade.id in data.owned) {
+                    owned[upgrade.id] = data.owned[upgrade.id];
+                }
+            });
+        }
+    }
+
+    // Tecnologias permanentes: servidor sempre adiciona
     if (data.perms && typeof data.perms === 'object') {
         permanentUpgrades.forEach(u => {
-            if (u.id in data.perms) {
-                u.purchased = (data.perms[u.id] === true);
+            if (u.id in data.perms && data.perms[u.id] === true) {
+                u.purchased = true;
             }
         });
     }
 
-    if (data.owned && typeof data.owned === 'object') {
-        upgrades.forEach(upgrade => {
-            if (upgrade.id in data.owned) {
-                owned[upgrade.id] = data.owned[upgrade.id];
-            }
-        });
-    }
-
-    if (typeof data.mps === 'number' && data.mps >= 0) {
-        mps = data.mps;
-    } else {
-        mps = calculateLocalMps();
-    }
+    // MPS: usa o oficial do servidor se > 0, senão calcula localmente
+    const serverMps = typeof data.mps === 'number' ? data.mps : 0;
+    mps = serverMps > 0 ? serverMps : calculateLocalMps();
     serverClickPower = calculateLocalClickPower();
+
+    // Diagnóstico de conexão KV no log
+    if (data._kv_connected !== undefined) {
+        if (data._kv_connected) {
+            logEl.textContent = `🟢 Nuvem ativa: Cloudflare KV (${data._kv_binding}) conectado`;
+            logEl.style.color = 'var(--text-lo)';
+        } else {
+            logEl.textContent = '⚠️ KV não vinculado no Cloudflare Pages (Pages > Settings > Functions > KV)';
+            logEl.style.color = 'var(--orange)';
+        }
+    }
 
     isDirty = true;
     saveLocalState();
@@ -913,6 +930,7 @@ async function syncWithCloud(actionPayload = null) {
         pendingClicks = 0;
         body = {
             action: 'sync',
+            source: 'web',
             clicks: clicksSent,
             makitas,
             totalMakitasMade,
@@ -931,9 +949,6 @@ async function syncWithCloud(actionPayload = null) {
 
         const data = await res.json();
         applyServerState(data);
-
-        logEl.textContent = '🟢 Conectado ao Cloudflare Pages & KV (Sync Ativo)';
-        logEl.style.color = 'var(--text-lo)';
     } catch (err) {
         // Recupera cliques caso falhe o envio
         pendingClicks += clicksSent;
@@ -944,10 +959,10 @@ async function syncWithCloud(actionPayload = null) {
     }
 }
 
-// Sincronização periódica a cada 10 segundos em segundo plano
+// Sincronização periódica a cada 5 segundos em segundo plano
 setInterval(() => {
     syncWithCloud();
-}, 10000);
+}, 5000);
 
 // Envio seguro ao trocar de aba ou fechar o navegador
 window.addEventListener('beforeunload', () => {

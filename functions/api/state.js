@@ -151,43 +151,64 @@ function getTotalOwned(owned) {
   return total;
 }
 
-// Produção passiva autoritativa baseada no delta de tempo entre chamadas
+function getKV(env) {
+  if (!env) return { kv: null, name: null };
+  if (env.MAKITA_KV && typeof env.MAKITA_KV.get === 'function') {
+    return { kv: env.MAKITA_KV, name: 'MAKITA_KV' };
+  }
+  for (const [key, val] of Object.entries(env)) {
+    if (val && typeof val.get === 'function' && typeof val.put === 'function') {
+      return { kv: val, name: key };
+    }
+  }
+  return { kv: null, name: null };
+}
+
+// Produção passiva autoritativa baseada no delta de tempo.
 function advancePassiveProduction(state, now) {
   const last = state.lastUpdate || now;
   const dt = Math.max(0, (now - last) / 1000.0);
-  const currentMps = calculateMps(state.owned, state.perms);
+  // Garante que o MPS não fique zerado se houver upgrades
+  const calculatedMps = calculateMps(state.owned, state.perms);
+  if ((!state.mps || state.mps <= 0) && calculatedMps > 0) {
+    state.mps = calculatedMps;
+  }
+  const currentMps = state.mps || calculatedMps || 0;
   if (dt > 0 && currentMps > 0) {
     const gain = currentMps * dt;
     state.makitas = (state.makitas || 0) + gain;
     state.totalMakitasMade = (state.totalMakitasMade || 0) + gain;
   }
   state.lastUpdate = now;
-  state.mps = currentMps;
   state.clickPower = calculateClickPower(state.perms);
   state.totalOwned = getTotalOwned(state.owned);
 }
 
 async function loadState(env) {
-  if (env && env.MAKITA_KV) {
+  const { kv, name } = getKV(env);
+  if (kv) {
     try {
-      const data = await env.MAKITA_KV.get(KV_KEY, { type: 'json' });
-      if (data) return data;
+      const data = await kv.get(KV_KEY, { type: 'json' });
+      if (data && typeof data === 'object') {
+        return { state: data, kvName: name, kvConnected: true };
+      }
     } catch (err) {
-      console.error('[KV] Erro ao ler MAKITA_KV:', err);
+      console.error(`[KV] Erro ao ler KV (${name}):`, err);
     }
   }
   if (!memoryFallbackState) {
     memoryFallbackState = getDefaultState();
   }
-  return memoryFallbackState;
+  return { state: memoryFallbackState, kvName: name, kvConnected: !!kv };
 }
 
 async function saveState(env, state) {
-  if (env && env.MAKITA_KV) {
+  const { kv, name } = getKV(env);
+  if (kv) {
     try {
-      await env.MAKITA_KV.put(KV_KEY, JSON.stringify(state));
+      await kv.put(KV_KEY, JSON.stringify(state));
     } catch (err) {
-      console.error('[KV] Erro ao gravar MAKITA_KV:', err);
+      console.error(`[KV] Erro ao gravar KV (${name}):`, err);
     }
   }
   memoryFallbackState = state;
@@ -201,13 +222,19 @@ export async function onRequestOptions() {
 
 export async function onRequestGet(context) {
   const { env } = context;
-  const state = await loadState(env);
+  const { state, kvName, kvConnected } = await loadState(env);
   const now = Date.now();
 
   advancePassiveProduction(state, now);
-  await saveState(env, state);
+  // NOTA: GET calcula a produção passiva em tempo real sem chamar saveState(),
+  // economizando a cota gratuita de 1.000 escritas/dia do Cloudflare KV
+  // e aproveitando a cota de 100.000 leituras/dia!
 
-  return new Response(JSON.stringify(state), {
+  return new Response(JSON.stringify({
+    ...state,
+    _kv_connected: kvConnected,
+    _kv_binding: kvName || 'NONE'
+  }), {
     status: 200,
     headers: CORS_HEADERS
   });
@@ -222,54 +249,93 @@ export async function onRequestPost(context) {
     // Body vazio ou malformado
   }
 
-  const state = await loadState(env);
+  const { state, kvName, kvConnected } = await loadState(env);
   const now = Date.now();
+  const previousMakitas = state.makitas || 0;
   advancePassiveProduction(state, now);
 
   const action = body.action || (body.clicks ? 'sync' : '');
+  const isEsp = body.source === 'esp';
+  const clientMakitas = typeof body.makitas === 'number' ? body.makitas : null;
+  const clientTotal = typeof body.totalMakitasMade === 'number' ? body.totalMakitasMade : null;
+  const clicks = Math.max(0, Math.min(parseInt(body.clicks || body.count || 0, 10), 5000));
 
   // Reset total
   if (action === 'reset') {
     const newState = getDefaultState();
     await saveState(env, newState);
-    return new Response(JSON.stringify({ ...newState, isReset: true }), {
+    return new Response(JSON.stringify({ ...newState, isReset: true, _kv_connected: kvConnected, _kv_binding: kvName || 'NONE' }), {
       status: 200,
       headers: CORS_HEADERS
     });
   }
 
-  // Sincronização (Servidor MASTER):
-  // - Servidor é sempre autoritativo para owned/perms (upgrades).
-  // - ESP: única exceção permitida é se o contador de makitas for maior; nesse caso apenas
-  //   o saldo é aceito, mas owned/perms NUNCA são sobrescritos pelo cliente via sync.
-  // - Web (buy/perm_buy): usa fluxo próprio de ações abaixo.
-  if (action === 'sync' || action === 'click') {
-    const clientMakitas = typeof body.makitas === 'number' ? body.makitas : null;
-    const clientTotal = typeof body.totalMakitasMade === 'number' ? body.totalMakitasMade : null;
-    const clicks = Math.max(0, Math.min(parseInt(body.clicks || body.count || 0, 10), 5000));
-    const isEsp = body.source === 'esp'; // ESP deve enviar source:"esp" para identificação
-
-    if (clientMakitas !== null && clientMakitas > state.makitas) {
-      // Cliente tem saldo maior: aceita apenas o contador de makitas
-      state.makitas = clientMakitas;
+  // RECONCILIAÇÃO DE SALDO:
+  // 1. Se a requisição vem da WEB (source !== 'esp'):
+  //    O SITE É O PRINCIPAL (MASTER)! O site envia para o KV e o KV puxa dele.
+  //    Se o KV tiver saldo estritamente maior (ex: cliques offline da ESP já registrados), mantém o maior.
+  //    Caso contrário, adota o saldo do site.
+  // 2. Se a requisição vem da ESP (source === 'esp'):
+  //    A ESP só envia se estiver com contagem MAIOR que o KV.
+  //    Se a ESP for maior: KV adota o saldo da ESP.
+  //    Se a ESP for menor ou igual: KV mantém seu saldo e soma cliques pendentes.
+  if (clientMakitas !== null) {
+    if (!isEsp) {
+      // Origem Web: o site é o principal!
+      if (clientMakitas > state.makitas || Math.abs(clientMakitas - state.makitas) < 500) {
+        state.makitas = clientMakitas;
+      }
       if (clientTotal && clientTotal > (state.totalMakitasMade || 0)) {
         state.totalMakitasMade = clientTotal;
       } else if (state.makitas > (state.totalMakitasMade || 0)) {
         state.totalMakitasMade = state.makitas;
       }
-
-      // owned e perms: NUNCA sobrescritos via sync — servidor é sempre master
-      // (compras só ocorrem via action:'buy' e 'perm_buy')
     } else {
-      // Servidor é MASTER: soma cliques físicos pendentes (ESP) sobre o estado da nuvem
-      if (clicks > 0) {
-        const gainPerClick = getSingleClickGain(state.perms, state.mps);
-        const totalGain = gainPerClick * clicks;
-        state.makitas += totalGain;
-        state.totalMakitasMade = (state.totalMakitasMade || 0) + totalGain;
+      // Origem ESP: apenas adota se a contagem da ESP for MAIOR que o KV
+      if (clientMakitas > state.makitas) {
+        state.makitas = clientMakitas;
+        if (state.makitas > (state.totalMakitasMade || 0)) {
+          state.totalMakitasMade = state.makitas;
+        }
       }
     }
-  } else if (action === 'buy') {
+  }
+
+  // Processa cliques pendentes enviados (se o cliente não estava já à frente no saldo)
+  if (clicks > 0 && (clientMakitas === null || clientMakitas <= state.makitas)) {
+    const gainPerClick = getSingleClickGain(state.perms, state.mps);
+    const totalGain = gainPerClick * clicks;
+    state.makitas += totalGain;
+    state.totalMakitasMade = (state.totalMakitasMade || 0) + totalGain;
+  }
+
+  // PROTEÇÃO DE UPGRADES CONTRA ISOLATE SEM ESTADO (COLD START):
+  // Apenas clientes Web (NUNCA a ESP) podem restaurar upgrades se o servidor estiver zerado
+  if (!isEsp && body.owned && typeof body.owned === 'object') {
+    const clientOwnedTotal = getTotalOwned(body.owned);
+    const serverOwnedTotal = getTotalOwned(state.owned);
+    if (clientOwnedTotal > serverOwnedTotal) {
+      state.owned = state.owned || {};
+      for (const u of UPGRADES) {
+        if (typeof body.owned[u.id] === 'number') {
+          state.owned[u.id] = Math.max(state.owned[u.id] || 0, Math.min(MAX_OWNED, body.owned[u.id]));
+        }
+      }
+      if (body.perms && typeof body.perms === 'object') {
+        state.perms = state.perms || {};
+        for (const p of PERMANENT_UPGRADES) {
+          if (body.perms[p.id] === true) {
+            state.perms[p.id] = true;
+          }
+        }
+      }
+      state.mps = calculateMps(state.owned, state.perms);
+      state.clickPower = calculateClickPower(state.perms);
+    }
+  }
+
+  // AÇÕES DE COMPRA (Web Master para Upgrades):
+  if (action === 'buy') {
     const upgradeId = body.upgradeId || body.id;
     const qtyStr = String(body.qty || '1');
     const up = UPGRADES.find(u => u.id === upgradeId);
@@ -302,6 +368,8 @@ export async function onRequestPost(context) {
           }
         }
       }
+      state.mps = calculateMps(state.owned, state.perms);
+      state.clickPower = calculateClickPower(state.perms);
     }
   } else if (action === 'perm_buy') {
     const permId = body.permId || body.id;
@@ -316,20 +384,36 @@ export async function onRequestPost(context) {
       if (!alreadyBought && parentBought && reqMet && state.makitas >= perm.cost) {
         state.makitas -= perm.cost;
         state.perms[perm.id] = true;
+        state.mps = calculateMps(state.owned, state.perms);
+        state.clickPower = calculateClickPower(state.perms);
       }
     }
   }
 
-  // Recalcula MPS, ClickPower e totalOwned
-  state.mps = calculateMps(state.owned, state.perms);
-  state.clickPower = calculateClickPower(state.perms);
   state.totalOwned = getTotalOwned(state.owned);
   state.lastUpdate = now;
 
-  // Persiste autoritativamente no Cloudflare KV
-  await saveState(env, state);
+  // COTA INTELIGENTE DE ESCRITA NO KV (1.000 writes/dia no plano gratuito):
+  // Grava imediatamente em compras, reset, cliques ou novos saldos.
+  // Em syncs periódicos sem cliques, grava a cada 60 segundos como checkpoint.
+  const hasStateChanged = 
+    action === 'buy' || 
+    action === 'perm_buy' || 
+    action === 'reset' ||
+    clicks > 0 ||
+    Math.abs(state.makitas - previousMakitas) > 5.0 ||
+    (now - (state.lastKvSave || 0) >= 60000);
 
-  return new Response(JSON.stringify(state), {
+  if (hasStateChanged) {
+    state.lastKvSave = now;
+    await saveState(env, state);
+  }
+
+  return new Response(JSON.stringify({
+    ...state,
+    _kv_connected: kvConnected,
+    _kv_binding: kvName || 'NONE'
+  }), {
     status: 200,
     headers: CORS_HEADERS
   });
