@@ -879,8 +879,14 @@ function applyServerState(data) {
     mps = serverMps > 0 ? serverMps : calculateLocalMps();
     serverClickPower = calculateLocalClickPower();
 
-    // Diagnóstico de conexão KV no log
-    if (data._kv_connected !== undefined) {
+    // Feedback de status da ordem de reset para a ESP
+    if (data.resetPendingEsp === true) {
+        logEl.textContent = '⏳ Ordem de Reset emitida! Aguardando a ESP confirmar a limpeza...';
+        logEl.style.color = 'var(--orange)';
+    } else if (data.lastResetAckAt && (Date.now() - data.lastResetAckAt < 30000)) {
+        logEl.textContent = '✅ A ESP confirmou que limpou sua memória e reiniciou!';
+        logEl.style.color = 'var(--green)';
+    } else if (data._kv_connected !== undefined) {
         if (data._kv_connected) {
             logEl.textContent = `🟢 Nuvem ativa: Cloudflare KV (${data._kv_binding}) conectado`;
             logEl.style.color = 'var(--text-lo)';

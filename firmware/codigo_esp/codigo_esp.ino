@@ -461,6 +461,10 @@ void saveLocalGameState() {
   f.close();
 }
 
+// Controle de Reset Remoto da ESP
+long lastProcessedResetId = 0;
+bool hasPendingResetAck = false;
+
 // ===== SINCRONIZAÇÃO COM A NUVEM (ESP = RECEIVER, SERVIDOR = MASTER) =====
 void syncWithCloud() {
   if (WiFi.status() != WL_CONNECTED) {
@@ -484,7 +488,13 @@ void syncWithCloud() {
   reqDoc["action"] = "sync";
   reqDoc["source"] = "esp";          // Identifica origem como ESP
   reqDoc["clicks"] = clicksToSend;
-  reqDoc["makitas"] = makitas;       // Servidor aceita SOMENTE se for maior que o KV
+  reqDoc["makitas"] = makitas;
+
+  // Envia check de confirmação caso a ESP tenha limpado sua memória
+  if (hasPendingResetAck) {
+    reqDoc["resetAck"] = true;
+    reqDoc["resetId"] = lastProcessedResetId;
+  }
 
   String reqBody;
   serializeJson(reqDoc, reqBody);
@@ -492,6 +502,11 @@ void syncWithCloud() {
   int httpCode = http.POST(reqBody);
 
   if (httpCode == HTTP_CODE_OK) {
+    if (hasPendingResetAck) {
+      hasPendingResetAck = false;
+      Serial.println(F("[RESET] Check de confirmacao enviado com sucesso ao servidor!"));
+    }
+
     String responsePayload = http.getString();
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument doc;
@@ -501,6 +516,63 @@ void syncWithCloud() {
     DeserializationError err = deserializeJson(doc, responsePayload);
 
     if (!err) {
+      // 0. TRATAMENTO DA ORDEM DE RESET VINDA DO WEBSITE:
+      bool resetOrder = doc["resetOrder"] | false;
+      long serverResetId = doc["resetId"] | 0;
+
+      if (resetOrder && (serverResetId > lastProcessedResetId || serverResetId == 0)) {
+        Serial.println(F("[RESET] Ordem de reset recebida do servidor!"));
+        lastProcessedResetId = serverResetId;
+
+        // Limpa todas as variáveis locais do jogo
+        makitas = 0.0;
+        pendingPhysicalClicks = 0;
+        for (int i = 0; i < NUM_UPGRADES; i++) {
+          ownedUpgrades[i] = 0;
+        }
+        permLubrificante = false;
+        permDiscoDiamante = false;
+        permMotorBrushless = false;
+        permEmpunhadura = false;
+        permBateriaLitio = false;
+        permIaMaker = false;
+        permRefrigeracao = false;
+        permTitanio = false;
+        permOverclock = false;
+        permNanobots = false;
+        permSingularidade = false;
+        permPlasmaCutter = false;
+        permFusaoFria = false;
+        permHiperconducao = false;
+        permSinergiaQuantica = false;
+        permLaserGama = false;
+        permTaquions = false;
+        permMateriaEscura = false;
+        permHiperClique = false;
+        permOnipotenciaMaker = false;
+
+        recalculateStats();
+        saveLocalGameState();
+
+        // Feedback imediato no LCD
+        printLinhaFormatada(0, "====================");
+        printLinhaFormatada(1, "   MAKITA CLICKER   ");
+        printLinhaFormatada(2, " ** JOGO RESETADO **");
+        printLinhaFormatada(3, " Memoria Limpa: OK! ");
+        precisaAtualizarLCD = true;
+
+        // Ativa flag para enviar o check de confirmação
+        hasPendingResetAck = true;
+
+        http.end();
+        client.stop();
+
+        // Envia o check de confirmação imediatamente para o servidor cessar a ordem
+        delay(200);
+        syncWithCloud();
+        return;
+      }
+
       // 1. Saldo Monotônico: adota se o servidor estiver com saldo maior
       if (doc.containsKey("makitas")) {
         double serverMakitas = doc["makitas"].as<double>();

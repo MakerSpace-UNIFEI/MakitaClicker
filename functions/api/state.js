@@ -83,6 +83,9 @@ function getDefaultState() {
     totalMakitasMade: 0.0,
     owned,
     perms,
+    resetId: 0,
+    resetPendingEsp: false,
+    lastResetAckAt: 0,
     lastUpdate: Date.now()
   };
 }
@@ -233,6 +236,7 @@ export async function onRequestGet(context) {
 
   return new Response(JSON.stringify({
     ...state,
+    resetOrder: state.resetPendingEsp === true,
     _kv_connected: kvConnected,
     _kv_binding: kvName || 'NONE'
   }), {
@@ -261,14 +265,34 @@ export async function onRequestPost(context) {
   const clientTotal = typeof body.totalMakitasMade === 'number' ? body.totalMakitasMade : null;
   const clicks = Math.max(0, Math.min(parseInt(body.clicks || body.count || 0, 10), 5000));
 
-  // Reset total
+  // Reset total disparado pelo website: emite ordem para a ESP
   if (action === 'reset') {
+    const resetId = Date.now();
     const newState = getDefaultState();
+    newState.resetId = resetId;
+    newState.resetPendingEsp = true; // Emite ordem contínua de reset para a ESP
+    newState.lastUpdate = resetId;
     await saveState(env, newState);
-    return new Response(JSON.stringify({ ...newState, isReset: true, _kv_connected: kvConnected, _kv_binding: kvName || 'NONE' }), {
+    return new Response(JSON.stringify({
+      ...newState,
+      isReset: true,
+      resetOrder: true,
+      _kv_connected: kvConnected,
+      _kv_binding: kvName || 'NONE'
+    }), {
       status: 200,
       headers: CORS_HEADERS
     });
+  }
+
+  // Confirmação de Reset vinda da ESP (A ESP avisa com um "check" que limpou sua memória)
+  let espAckReceived = false;
+  if (isEsp && body.resetAck === true) {
+    if (state.resetPendingEsp) {
+      state.resetPendingEsp = false;
+      state.lastResetAckAt = now;
+      espAckReceived = true;
+    }
   }
 
   // RECONCILIAÇÃO MONOTÔNICA E CONVERGÊNCIA (CRDT / RATCHET):
@@ -384,6 +408,7 @@ export async function onRequestPost(context) {
     action === 'buy' || 
     action === 'perm_buy' || 
     action === 'reset' ||
+    espAckReceived ||
     clicks > 0 ||
     Math.abs(state.makitas - previousMakitas) > 5.0 ||
     (now - (state.lastKvSave || 0) >= 60000);
@@ -395,6 +420,7 @@ export async function onRequestPost(context) {
 
   return new Response(JSON.stringify({
     ...state,
+    resetOrder: state.resetPendingEsp === true,
     _kv_connected: kvConnected,
     _kv_binding: kvName || 'NONE'
   }), {
