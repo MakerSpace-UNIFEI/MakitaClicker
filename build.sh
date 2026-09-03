@@ -17,10 +17,10 @@ fi
 echo "=== Versão deste build: $VERSION ==="
 
 # Patcha a versão do firmware no .ino ANTES de compilar
-sed -i "s/#define CURRENT_FIRMWARE_VER .*/#define CURRENT_FIRMWARE_VER $VERSION/" codigo_esp/codigo_esp.ino
+sed -i "s/#define CURRENT_FIRMWARE_VER .*/#define CURRENT_FIRMWARE_VER $VERSION/" firmware/codigo_esp/codigo_esp.ino
 
 echo "[VERSION] codigo_esp.ino patchado:"
-grep "CURRENT_FIRMWARE_VER" codigo_esp/codigo_esp.ino
+grep "CURRENT_FIRMWARE_VER" firmware/codigo_esp/codigo_esp.ino
 
 echo "=== [1/3] Instalando arduino-cli ==="
 curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | BINDIR=. sh
@@ -40,7 +40,7 @@ echo "=== Copiando Assets Web para Hospedagem no Cloudflare Pages ==="
 cp -r web/* online/
 
 echo "=== Compilando Firmware ESP8266 ==="
-SKETCH_DIR="codigo_esp"
+SKETCH_DIR="firmware/codigo_esp"
 mkdir -p build_esp
 arduino-cli compile --fqbn esp8266:esp8266:nodemcuv2 \
   --output-dir ./build_esp \

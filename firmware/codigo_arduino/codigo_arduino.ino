@@ -18,7 +18,7 @@ unsigned long ultimoTempo1 = 0;
 bool estadoAnterior2 = HIGH;
 unsigned long ultimoTempo2 = 0;
 
-const unsigned long DEBOUNCE_MS = 12; // Filtro rápido de 12ms apenas contra ruído mecânico
+const unsigned long DEBOUNCE_MS = 25; // Filtro de 25ms para botões mecânicos e microswitches
 
 // Controle de atualização desacoplada do LCD (elimina latência I2C)
 bool precisaAtualizarLCD = false;
@@ -137,7 +137,6 @@ uint8_t detectarEnderecoI2C() {
 }
 
 // Formatação inteligente e ultra compacta de números para o LCD 20x4
-// Suporta perfeitamente até Bilhões (99B+), Trilhões (T) e Quatrilhões (Qa)
 String formatarNumero(double num) {
   if (num < 0) return "0";
   if (num < 10.0) {
@@ -173,7 +172,9 @@ String formatarNumero(double num) {
   }
 }
 
-// Imprime uma linha completa preenchendo exatamente com espaços (elimina flicker do lcd.clear)
+// Cache de linha para double-buffering (elimina transmissões redundantes via I2C)
+String prevLcdLine3 = "";
+
 void printLinhaFormatada(int linha, String texto) {
   if (!lcd) return;
   while (texto.length() < 20) {
@@ -181,6 +182,12 @@ void printLinhaFormatada(int linha, String texto) {
   }
   if (texto.length() > 20) {
     texto = texto.substring(0, 20);
+  }
+  if (linha == 3 && texto == prevLcdLine3) {
+    return; // Linha inalterada, dispensa comunicação I2C
+  }
+  if (linha == 3) {
+    prevLcdLine3 = texto;
   }
   lcd->setCursor(0, linha);
   lcd->print(texto);
@@ -191,46 +198,64 @@ void atualizarLCD() {
   unsigned long now = millis();
   bool clickAtivo = (now - ultimoClickVisual < duracaoFeedbackClick);
 
-  // Linha 0: Cabeçalho com Ícones de Disco Giratório / Faíscas de Corte
+  // Linha 0: Cabeçalho com Ícones de Disco Giratório / Faíscas de Corte (só reescreve se mudar)
   uint8_t bladeChar = (frameAnimacao % 2 == 0) ? 0 : 1;
-  lcd->setCursor(0, 0);
-  if (clickAtivo) {
-    lcd->write((uint8_t)5); // iconSpark
-    lcd->print(F(" MAKITA CLICKER "));
-    lcd->write((uint8_t)5); // iconSpark
-    lcd->print(F("  "));
-  } else {
-    lcd->write(bladeChar);
-    lcd->print(F(" MAKITA CLICKER "));
-    lcd->write(bladeChar);
-    lcd->print(F("  "));
+  static uint8_t prevBladeChar = 255;
+  static bool prevClickAtivo0 = false;
+  if (bladeChar != prevBladeChar || clickAtivo != prevClickAtivo0) {
+    prevBladeChar = bladeChar;
+    prevClickAtivo0 = clickAtivo;
+    lcd->setCursor(0, 0);
+    if (clickAtivo) {
+      lcd->write((uint8_t)5); // iconSpark
+      lcd->print(F(" MAKITA CLICKER "));
+      lcd->write((uint8_t)5); // iconSpark
+      lcd->print(F("  "));
+    } else {
+      lcd->write(bladeChar);
+      lcd->print(F(" MAKITA CLICKER "));
+      lcd->write(bladeChar);
+      lcd->print(F("  "));
+    }
   }
 
   // Linha 1: Saldo de Makitas (com Ícone de Moeda ou Troféu para 99B+)
-  lcd->setCursor(0, 1);
-  if (makitasGlobal >= 99000000000.0) {
-    lcd->write((uint8_t)6); // iconTrophy
-    String saldoStr = " Saldo:" + formatarNumero(makitasGlobal) + " MKT!";
-    while (saldoStr.length() < 19) saldoStr += " ";
-    lcd->print(saldoStr.substring(0, 19));
-  } else {
-    lcd->write((uint8_t)2); // iconCoin
-    String saldoStr = " Saldo:" + formatarNumero(makitasGlobal) + " MKT";
-    while (saldoStr.length() < 19) saldoStr += " ";
-    lcd->print(saldoStr.substring(0, 19));
+  bool is99B = (makitasGlobal >= 99000000000.0);
+  String saldoStr = is99B 
+      ? (" Saldo:" + formatarNumero(makitasGlobal) + " MKT!") 
+      : (" Saldo:" + formatarNumero(makitasGlobal) + " MKT");
+  while (saldoStr.length() < 19) saldoStr += " ";
+  saldoStr = saldoStr.substring(0, 19);
+
+  static String prevSaldoStr = "";
+  static bool prevIs99B = false;
+  if (saldoStr != prevSaldoStr || is99B != prevIs99B) {
+    prevSaldoStr = saldoStr;
+    prevIs99B = is99B;
+    lcd->setCursor(0, 1);
+    lcd->write(is99B ? (uint8_t)6 : (uint8_t)2);
+    lcd->print(saldoStr);
   }
 
   // Linha 2: Poder de Clique e Taxa de Produção (MPS)
-  lcd->setCursor(0, 2);
-  lcd->write((uint8_t)3); // iconBolt
   String taxaStr = "+" + formatarNumero(clickPowerGlobal) + " | ";
-  lcd->print(taxaStr);
-  lcd->write((uint8_t)4); // iconFactory
   String mpsStr = " " + formatarNumero(mpsGlobal) + "/s";
   int espacoRestante = 20 - 1 - (int)taxaStr.length() - 1;
   if (espacoRestante > 0) {
     while ((int)mpsStr.length() < espacoRestante) mpsStr += " ";
-    lcd->print(mpsStr.substring(0, espacoRestante));
+    mpsStr = mpsStr.substring(0, espacoRestante);
+  }
+
+  static String prevTaxaStr = "";
+  static String prevMpsStr = "";
+  if (taxaStr != prevTaxaStr || mpsStr != prevMpsStr) {
+    prevTaxaStr = taxaStr;
+    prevMpsStr = mpsStr;
+    lcd->setCursor(0, 2);
+    lcd->write((uint8_t)3); // iconBolt
+    lcd->print(taxaStr);
+    lcd->write((uint8_t)4); // iconFactory
+    lcd->print(mpsStr);
   }
 
   // Linha 3: Feedback de Clique ou Status Rotativo com IP e Meta 99B
@@ -334,11 +359,10 @@ void processarSerialRecebida() {
         serialRxIdx = 0;
       }
     } else if (serialRxIdx < sizeof(serialRxBuf) - 1) {
-      if (c >= 32 && c <= 126) { // Apenas caracteres ASCII válidos
+      if (c >= 32 && c <= 126) {
         serialRxBuf[serialRxIdx++] = c;
       }
     } else {
-      // Buffer excedido: descarta para recuperar sincronia imediatamente
       serialRxIdx = 0;
     }
   }
@@ -387,7 +411,6 @@ void loop() {
   unsigned long now = millis();
 
   // 1. Leitura de 2 Entradas de Clique Separadas e Independentes (Pino 7 e Pino 6)
-  // Cada entrada dispara instantaneamente ao fechar no GND (HIGH -> LOW)
   bool l1 = digitalRead(PIN_BOTAO_1);
   if (l1 == LOW && estadoAnterior1 == HIGH && (now - ultimoTempo1 > DEBOUNCE_MS)) {
     ultimoTempo1 = now;
@@ -428,7 +451,7 @@ void loop() {
     precisaAtualizarLCD = true;
   }
 
-  // 4. Atualização não-bloqueante e cadenciada do Display LCD (elimina travamentos I2C)
+  // 4. Atualização não-bloqueante e cadenciada do Display LCD
   if (precisaAtualizarLCD && (now - ultimoUpdateLCD >= INTERVALO_UPDATE_LCD)) {
     precisaAtualizarLCD = false;
     ultimoUpdateLCD = now;

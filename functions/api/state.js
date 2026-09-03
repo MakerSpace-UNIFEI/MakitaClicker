@@ -1,6 +1,7 @@
 // =====================================================================
 // MAKITA CLICKER - CLOUDFLARE PAGES FUNCTION: /api/state
 // API Serverless autoritativa com persistência no Cloudflare KV
+// Master de Estado + Sincronização Inteligente (Cloud Master / Client Slave)
 // =====================================================================
 
 const KV_KEY = 'gamestate';
@@ -65,7 +66,7 @@ const CORS_HEADERS = {
   'Content-Type': 'application/json; charset=utf-8'
 };
 
-// Fallback em memória caso o binding MAKITA_KV ainda não tenha sido configurado
+// Fallback em memória caso o binding MAKITA_KV ainda não esteja vinculado
 let memoryFallbackState = null;
 
 function getDefaultState() {
@@ -150,6 +151,7 @@ function getTotalOwned(owned) {
   return total;
 }
 
+// Produção passiva autoritativa baseada no delta de tempo entre chamadas
 function advancePassiveProduction(state, now) {
   const last = state.lastUpdate || now;
   const dt = Math.max(0, (now - last) / 1000.0);
@@ -201,14 +203,9 @@ export async function onRequestGet(context) {
   const { env } = context;
   const state = await loadState(env);
   const now = Date.now();
-  const prevLast = state.lastUpdate || now;
 
   advancePassiveProduction(state, now);
-
-  // Se passou mais de 1s de produção passiva, salva o estado atualizado no KV
-  if (now - prevLast > 1000) {
-    await saveState(env, state);
-  }
+  await saveState(env, state);
 
   return new Response(JSON.stringify(state), {
     status: 200,
@@ -222,7 +219,7 @@ export async function onRequestPost(context) {
   try {
     body = await request.json();
   } catch (e) {
-    // Body vazio ou inválido
+    // Body vazio ou malformado
   }
 
   const state = await loadState(env);
@@ -231,6 +228,7 @@ export async function onRequestPost(context) {
 
   const action = body.action || (body.clicks ? 'sync' : '');
 
+  // Reset total
   if (action === 'reset') {
     const newState = getDefaultState();
     await saveState(env, newState);
@@ -240,15 +238,51 @@ export async function onRequestPost(context) {
     });
   }
 
+  // Sincronização inteligente (Master/Slave):
+  // - Se cliente (ESP ou Web) enviar saldo maior que o Cloud: o cliente atualiza a nuvem.
+  // - Se a nuvem tiver saldo maior ou igual: a nuvem prevalece (master), somando cliques pendentes.
   if (action === 'sync' || action === 'click') {
-    const clicks = Math.max(1, parseInt(body.clicks || body.count || 1, 10));
-    // Limite razoável de segurança por requisição (máx 1000 cliques por lote)
-    const validClicks = Math.min(clicks, 1000);
-    const gainPerClick = getSingleClickGain(state.perms, state.mps);
-    const totalGain = gainPerClick * validClicks;
+    const clientMakitas = typeof body.makitas === 'number' ? body.makitas : null;
+    const clientTotal = typeof body.totalMakitasMade === 'number' ? body.totalMakitasMade : null;
+    const clicks = Math.max(0, Math.min(parseInt(body.clicks || body.count || 0, 10), 5000));
 
-    state.makitas += totalGain;
-    state.totalMakitasMade = (state.totalMakitasMade || 0) + totalGain;
+    // O cliente possui maior progresso (ex: jogou offline ou acumulou mais)?
+    if (clientMakitas !== null && clientMakitas > state.makitas) {
+      state.makitas = clientMakitas;
+      if (clientTotal && clientTotal > (state.totalMakitasMade || 0)) {
+        state.totalMakitasMade = clientTotal;
+      } else if (state.makitas > (state.totalMakitasMade || 0)) {
+        state.totalMakitasMade = state.makitas;
+      }
+
+      // Adota upgrades do cliente se fornecidos
+      if (body.owned && typeof body.owned === 'object') {
+        state.owned = state.owned || {};
+        for (const u of UPGRADES) {
+          if (typeof body.owned[u.id] === 'number') {
+            state.owned[u.id] = Math.max(state.owned[u.id] || 0, Math.min(MAX_OWNED, body.owned[u.id]));
+          }
+        }
+      }
+
+      // Adota melhorias permanentes do cliente
+      if (body.perms && typeof body.perms === 'object') {
+        state.perms = state.perms || {};
+        for (const p of PERMANENT_UPGRADES) {
+          if (body.perms[p.id] === true) {
+            state.perms[p.id] = true;
+          }
+        }
+      }
+    } else {
+      // Nuvem é MASTER e tem saldo superior ou igual: soma os cliques pendentes enviados
+      if (clicks > 0) {
+        const gainPerClick = getSingleClickGain(state.perms, state.mps);
+        const totalGain = gainPerClick * clicks;
+        state.makitas += totalGain;
+        state.totalMakitasMade = (state.totalMakitasMade || 0) + totalGain;
+      }
+    }
   } else if (action === 'buy') {
     const upgradeId = body.upgradeId || body.id;
     const qtyStr = String(body.qty || '1');
@@ -291,20 +325,22 @@ export async function onRequestPost(context) {
       state.perms = state.perms || {};
       const alreadyBought = (state.perms[perm.id] === true);
       const parentBought = !perm.parent || (state.perms[perm.parent] === true);
+      const reqMet = (state.totalMakitasMade || state.makitas) >= perm.req;
 
-      if (!alreadyBought && parentBought && state.makitas >= perm.cost) {
+      if (!alreadyBought && parentBought && reqMet && state.makitas >= perm.cost) {
         state.makitas -= perm.cost;
         state.perms[perm.id] = true;
       }
     }
   }
 
-  // Recalcula MPS e Poder de Clique após a ação
+  // Recalcula MPS, ClickPower e totalOwned
   state.mps = calculateMps(state.owned, state.perms);
   state.clickPower = calculateClickPower(state.perms);
   state.totalOwned = getTotalOwned(state.owned);
   state.lastUpdate = now;
 
+  // Persiste autoritativamente no Cloudflare KV
   await saveState(env, state);
 
   return new Response(JSON.stringify(state), {

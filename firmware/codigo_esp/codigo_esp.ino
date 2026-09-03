@@ -5,6 +5,7 @@
 #include <ESP8266HTTPClient.h>
 #include <ESP8266httpUpdate.h>
 #include <ArduinoJson.h>
+#include <LittleFS.h>
 
 const int NUM_UPGRADES = 24;
 
@@ -23,6 +24,7 @@ struct UpgradeConfig {
 
 const char* VERSION_URL = "https://makitaclicker.pages.dev/version.json";
 const char* STATE_URL   = "https://makitaclicker.pages.dev/api/state";
+const char* GAMESTATE_FILE = "/gamestate.json";
 
 const char* ssid = "MakerSpace UNIFEI";
 const char* password = "makerspace@23";
@@ -99,7 +101,12 @@ bool permMateriaEscura = false;     // (bit 17) +300% MPS global
 bool permHiperClique = false;       // (bit 18) 10x multiplicador de poder de clique
 bool permOnipotenciaMaker = false;  // (bit 19) +500% MPS global, +30% MPS/clique, 4x oficinas
 
-double getClickPower() {
+// Cache de MPS e Poder de Clique para evitar chamadas pesadas no loop
+double cachedMps = 0.0;
+double cachedClickPower = 1.0;
+
+void recalculateStats() {
+  // Poder de clique
   double power = 1.0;
   if (permDiscoDiamante) power += 1.0;
   if (permTitanio) power += 3.0;
@@ -107,10 +114,9 @@ double getClickPower() {
   if (permLaserGama) power += 200.0;
   if (permSingularidade) power *= 3.0;
   if (permHiperClique) power *= 10.0;
-  return power;
-}
+  cachedClickPower = power;
 
-double getTotalMps() {
+  // MPS base das oficinas
   double baseMps = 0.0;
   for (int i = 0; i < NUM_UPGRADES; i++) {
     baseMps += ((double)ownedUpgrades[i] * UPGRADE_CONFIGS[i].mps);
@@ -136,7 +142,15 @@ double getTotalMps() {
   if (permMateriaEscura) multiplier += 3.00;
   if (permOnipotenciaMaker) multiplier += 5.00;
 
-  return baseMps * multiplier;
+  cachedMps = baseMps * multiplier;
+}
+
+double getClickPower() {
+  return cachedClickPower;
+}
+
+double getTotalMps() {
+  return cachedMps;
 }
 
 void notifyMega() {
@@ -144,22 +158,21 @@ void notifyMega() {
   for (int i = 0; i < NUM_UPGRADES; i++) {
     totalOwned += ownedUpgrades[i];
   }
-  String payload = "MAKITA:" + String(makitas, 1) + "," + String(getTotalMps(), 1) + "," + String(getClickPower(), 1) + "," + String(totalOwned);
+  String payload = "MAKITA:" + String(makitas, 1) + "," + String(cachedMps, 1) + "," + String(cachedClickPower, 1) + "," + String(totalOwned);
   megaSerial.println(payload);
   megaSerial.flush();
 }
 
 void handleClick() {
-  double gain = getClickPower();
-  double currentMps = getTotalMps();
+  double gain = cachedClickPower;
   if (permOnipotenciaMaker) {
-    gain += (currentMps * 0.30);
+    gain += (cachedMps * 0.30);
   } else if (permSinergiaQuantica) {
-    gain += (currentMps * 0.20);
+    gain += (cachedMps * 0.20);
   } else if (permOverclock) {
-    gain += (currentMps * 0.10);
+    gain += (cachedMps * 0.10);
   } else if (permEmpunhadura) {
-    gain += (currentMps * 0.05);
+    gain += (cachedMps * 0.05);
   }
 
   makitas += gain;
@@ -167,31 +180,187 @@ void handleClick() {
   notifyMega(); // Atualização instantânea no display LCD (0ms)
 }
 
+// ===== PERSISTÊNCIA LOCAL (LITTLEFS) =====
+void loadLocalGameState() {
+  if (!LittleFS.begin()) {
+    Serial.println(F("[FS] Falha ao montar LittleFS"));
+    recalculateStats();
+    return;
+  }
+
+  if (!LittleFS.exists(GAMESTATE_FILE)) {
+    Serial.println(F("[FS] Nenhum save local encontrado. Iniciando estado padrao."));
+    recalculateStats();
+    return;
+  }
+
+  File f = LittleFS.open(GAMESTATE_FILE, "r");
+  if (!f) {
+    Serial.println(F("[FS] Erro ao abrir gamestate.json"));
+    recalculateStats();
+    return;
+  }
+
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+  JsonDocument doc;
+#else
+  DynamicJsonDocument doc(2048);
+#endif
+  DeserializationError err = deserializeJson(doc, f);
+  f.close();
+
+  if (err) {
+    Serial.printf("[FS] Erro parse save local: %s\n", err.c_str());
+    recalculateStats();
+    return;
+  }
+
+  if (doc.containsKey("makitas")) makitas = doc["makitas"].as<double>();
+  if (doc.containsKey("owned")) {
+    JsonObject ownedObj = doc["owned"].as<JsonObject>();
+    for (int i = 0; i < NUM_UPGRADES; i++) {
+      if (ownedObj.containsKey(UPGRADE_CONFIGS[i].id)) {
+        ownedUpgrades[i] = ownedObj[UPGRADE_CONFIGS[i].id].as<int>();
+      }
+    }
+  }
+
+  if (doc.containsKey("perms")) {
+    JsonObject permsObj = doc["perms"].as<JsonObject>();
+    permLubrificante = permsObj["perm_lubrificante"] | false;
+    permDiscoDiamante = permsObj["perm_disco_diamante"] | false;
+    permMotorBrushless = permsObj["perm_motor_brushless"] | false;
+    permEmpunhadura = permsObj["perm_empunhadura"] | false;
+    permBateriaLitio = permsObj["perm_bateria_litio"] | false;
+    permIaMaker = permsObj["perm_ia_maker"] | false;
+    permRefrigeracao = permsObj["perm_refrigeracao"] | false;
+    permTitanio = permsObj["perm_titanio"] | false;
+    permOverclock = permsObj["perm_overclock"] | false;
+    permNanobots = permsObj["perm_nanobots"] | false;
+    permSingularidade = permsObj["perm_singularidade"] | false;
+    permPlasmaCutter = permsObj["perm_plasma_cutter"] | false;
+    permFusaoFria = permsObj["perm_fusao_fria"] | false;
+    permHiperconducao = permsObj["perm_hiperconducao"] | false;
+    permSinergiaQuantica = permsObj["perm_sinergia_quantica"] | false;
+    permLaserGama = permsObj["perm_laser_gama"] | false;
+    permTaquions = permsObj["perm_taquions"] | false;
+    permMateriaEscura = permsObj["perm_materia_escura"] | false;
+    permHiperClique = permsObj["perm_hiper_clique"] | false;
+    permOnipotenciaMaker = permsObj["perm_onipotencia_maker"] | false;
+  }
+
+  recalculateStats();
+  Serial.printf("[FS] Save local carregado! Saldo: %.1f | MPS: %.1f\n", makitas, cachedMps);
+}
+
+void saveLocalGameState() {
+  File f = LittleFS.open(GAMESTATE_FILE, "w");
+  if (!f) return;
+
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+  JsonDocument doc;
+#else
+  DynamicJsonDocument doc(2048);
+#endif
+  doc["makitas"] = makitas;
+
+  JsonObject ownedObj = doc["owned"].to<JsonObject>();
+  for (int i = 0; i < NUM_UPGRADES; i++) {
+    ownedObj[UPGRADE_CONFIGS[i].id] = ownedUpgrades[i];
+  }
+
+  JsonObject permsObj = doc["perms"].to<JsonObject>();
+  permsObj["perm_lubrificante"] = permLubrificante;
+  permsObj["perm_disco_diamante"] = permDiscoDiamante;
+  permsObj["perm_motor_brushless"] = permMotorBrushless;
+  permsObj["perm_empunhadura"] = permEmpunhadura;
+  permsObj["perm_bateria_litio"] = permBateriaLitio;
+  permsObj["perm_ia_maker"] = permIaMaker;
+  permsObj["perm_refrigeracao"] = permRefrigeracao;
+  permsObj["perm_titanio"] = permTitanio;
+  permsObj["perm_overclock"] = permOverclock;
+  permsObj["perm_nanobots"] = permNanobots;
+  permsObj["perm_singularidade"] = permSingularidade;
+  permsObj["perm_plasma_cutter"] = permPlasmaCutter;
+  permsObj["perm_fusao_fria"] = permFusaoFria;
+  permsObj["perm_hiperconducao"] = permHiperconducao;
+  permsObj["perm_sinergia_quantica"] = permSinergiaQuantica;
+  permsObj["perm_laser_gama"] = permLaserGama;
+  permsObj["perm_taquions"] = permTaquions;
+  permsObj["perm_materia_escura"] = permMateriaEscura;
+  permsObj["perm_hiper_clique"] = permHiperClique;
+  permsObj["perm_onipotencia_maker"] = permOnipotenciaMaker;
+
+  serializeJson(doc, f);
+  f.close();
+}
+
+// ===== SINCRONIZAÇÃO INTELIGENTE COM A NUVEM =====
 void syncWithCloud() {
   if (WiFi.status() != WL_CONNECTED) {
     return;
   }
 
   WiFiClientSecure client;
-  client.setInsecure(); // Sem validação de certificado para economia de RAM
+  client.setInsecure(); // Economia de RAM no ESP8266
 
   HTTPClient http;
   http.begin(client, STATE_URL);
   http.addHeader("Content-Type", "application/json");
 
-  int httpCode = -1;
   int clicksToSend = pendingPhysicalClicks;
 
-  if (clicksToSend > 0) {
-    String payload = "{\"action\":\"sync\",\"clicks\":" + String(clicksToSend) + "}";
-    httpCode = http.POST(payload);
-  } else {
-    httpCode = http.GET();
+  // Monta pacote com o estado do ESP para resolução Master/Slave na nuvem:
+  // Se o ESP possuir saldo maior (ex: jogou offline), a nuvem aceitará o estado do ESP.
+  // Se a nuvem tiver saldo maior ou igual, a nuvem prevalece (master), somando os cliques pendentes.
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+  JsonDocument reqDoc;
+#else
+  DynamicJsonDocument reqDoc(2048);
+#endif
+  reqDoc["action"] = "sync";
+  reqDoc["clicks"] = clicksToSend;
+  reqDoc["makitas"] = makitas;
+
+  JsonObject reqOwned = reqDoc["owned"].to<JsonObject>();
+  for (int i = 0; i < NUM_UPGRADES; i++) {
+    reqOwned[UPGRADE_CONFIGS[i].id] = ownedUpgrades[i];
   }
+
+  JsonObject reqPerms = reqDoc["perms"].to<JsonObject>();
+  reqPerms["perm_lubrificante"] = permLubrificante;
+  reqPerms["perm_disco_diamante"] = permDiscoDiamante;
+  reqPerms["perm_motor_brushless"] = permMotorBrushless;
+  reqPerms["perm_empunhadura"] = permEmpunhadura;
+  reqPerms["perm_bateria_litio"] = permBateriaLitio;
+  reqPerms["perm_ia_maker"] = permIaMaker;
+  reqPerms["perm_refrigeracao"] = permRefrigeracao;
+  reqPerms["perm_titanio"] = permTitanio;
+  reqPerms["perm_overclock"] = permOverclock;
+  reqPerms["perm_nanobots"] = permNanobots;
+  reqPerms["perm_singularidade"] = permSingularidade;
+  reqPerms["perm_plasma_cutter"] = permPlasmaCutter;
+  reqPerms["perm_fusao_fria"] = permFusaoFria;
+  reqPerms["perm_hiperconducao"] = permHiperconducao;
+  reqPerms["perm_sinergia_quantica"] = permSinergiaQuantica;
+  reqPerms["perm_laser_gama"] = permLaserGama;
+  reqPerms["perm_taquions"] = permTaquions;
+  reqPerms["perm_materia_escura"] = permMateriaEscura;
+  reqPerms["perm_hiper_clique"] = permHiperClique;
+  reqPerms["perm_onipotencia_maker"] = permOnipotenciaMaker;
+
+  String reqBody;
+  serializeJson(reqDoc, reqBody);
+
+  int httpCode = http.POST(reqBody);
 
   if (httpCode == HTTP_CODE_OK) {
     String responsePayload = http.getString();
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+    JsonDocument doc;
+#else
     DynamicJsonDocument doc(2048);
+#endif
     DeserializationError err = deserializeJson(doc, responsePayload);
 
     if (!err) {
@@ -199,7 +368,7 @@ void syncWithCloud() {
         makitas = doc["makitas"].as<double>();
       }
 
-      // Desconta os cliques confirmados pelo servidor
+      // Desconta cliques confirmados
       pendingPhysicalClicks -= clicksToSend;
       if (pendingPhysicalClicks < 0) pendingPhysicalClicks = 0;
 
@@ -236,8 +405,10 @@ void syncWithCloud() {
         permOnipotenciaMaker = permsObj["perm_onipotencia_maker"] | false;
       }
 
+      recalculateStats();
+      saveLocalGameState();
       notifyMega();
-      Serial.printf("[CLOUD] Sync OK! Saldo: %.1f | MPS: %.1f\n", makitas, getTotalMps());
+      Serial.printf("[CLOUD] Sync OK! Saldo: %.1f | MPS: %.1f\n", makitas, cachedMps);
     } else {
       Serial.printf("[CLOUD] Erro parse JSON: %s\n", err.c_str());
     }
@@ -253,7 +424,7 @@ void checkOTA() {
   Serial.println("[OTA] Verificando atualizacoes...");
 
   WiFiClientSecure client;
-  client.setInsecure(); // sem verificação de certificado (RAM limitada no ESP8266)
+  client.setInsecure();
 
   HTTPClient http;
   String checkUrl = String(VERSION_URL) + "?t=" + String(millis());
@@ -271,7 +442,11 @@ void checkOTA() {
   http.end();
   client.stop();
 
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+  JsonDocument doc;
+#else
   StaticJsonDocument<384> doc;
+#endif
   DeserializationError err = deserializeJson(doc, payload);
   if (err) {
     Serial.printf("[OTA] JSON invalido: %s\n", err.c_str());
@@ -326,6 +501,9 @@ void setup() {
   // Inicializa o pino de reset do Mega em modo Open-Drain (alta impedancia)
   pinMode(MEGA_RESET_PIN, INPUT);
 
+  // Carrega save da flash LittleFS imediatamente
+  loadLocalGameState();
+
   WiFi.begin(ssid, password);
   Serial.print("[WiFi] Conectando");
   unsigned long wifiStart = millis();
@@ -338,7 +516,6 @@ void setup() {
   if (WiFi.status() == WL_CONNECTED) {
     Serial.print("[WiFi] Conectado! IP: ");
     Serial.println(WiFi.localIP());
-    // Checa OTA ao iniciar
     checkOTA();
   } else {
     Serial.println("[WiFi] Nao conectado (modo offline)");
@@ -358,7 +535,9 @@ void setup() {
 unsigned long lastTick = 0;
 unsigned long lastMegaUpdate = 0;
 unsigned long lastCloudSync = 0;
+unsigned long lastLocalSave = 0;
 const unsigned long CLOUD_SYNC_INTERVAL_MS = 30000; // Sincronização a cada 30 segundos
+const unsigned long LOCAL_SAVE_INTERVAL_MS = 15000; // Autosave na flash a cada 15 segundos
 
 void loop() {
   unsigned long now = millis();
@@ -366,12 +545,12 @@ void loop() {
   // 1. Recebe cliques do Arduino Mega de forma 100% não-bloqueante
   processarSerialMega();
 
-  // 2. Produção passiva local contínua entre ciclos de sync
+  // 2. Produção passiva local contínua entre ciclos de sync (usando cache)
   if (now - lastTick >= 100) {
     float dt = (now - lastTick) / 1000.0;
     lastTick = now;
-    if (getTotalMps() > 0) {
-      makitas += (getTotalMps() * dt);
+    if (cachedMps > 0) {
+      makitas += (cachedMps * dt);
     }
   }
 
@@ -381,18 +560,27 @@ void loop() {
     notifyMega();
   }
 
-  // 4. Garante que a Linha 3 do LCD continue exibindo o endereço do Pages
+  // 4. Envia status de Web para o LCD apenas na mudança de status ou a cada 60 segundos
   static unsigned long lastUrlDisplay = 0;
-  if (now - lastUrlDisplay >= 4000) {
+  static bool lastWifiConnected = false;
+  bool isConnected = (WiFi.status() == WL_CONNECTED);
+  if (isConnected != lastWifiConnected || (now - lastUrlDisplay >= 60000)) {
     lastUrlDisplay = now;
-    if (WiFi.status() == WL_CONNECTED) {
+    lastWifiConnected = isConnected;
+    if (isConnected) {
       megaSerial.println("WEB:pages.dev");
     } else {
       megaSerial.println("WEB:Sem WiFi");
     }
   }
 
-  // 5. Sincronização periódica com a Nuvem (Cloudflare Pages & KV) a cada 30 segundos
+  // 5. Autosave na flash LittleFS a cada 15 segundos (proteção contra perda de energia)
+  if (now - lastLocalSave >= LOCAL_SAVE_INTERVAL_MS) {
+    lastLocalSave = now;
+    saveLocalGameState();
+  }
+
+  // 6. Sincronização periódica com a Nuvem (Cloudflare Pages & KV) a cada 30 segundos
   if (now - lastCloudSync >= CLOUD_SYNC_INTERVAL_MS) {
     lastCloudSync = now;
     syncWithCloud();
