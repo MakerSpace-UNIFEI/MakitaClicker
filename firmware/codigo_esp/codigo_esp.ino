@@ -171,7 +171,8 @@ String formatarNumero(double num) {
   }
 }
 
-// Double-buffering na linha 3 para economizar transmissões I2C
+// Double-buffering nas linhas 2 e 3 para economizar transmissões I2C
+String prevLcdLine2 = "";
 String prevLcdLine3 = "";
 
 void printLinhaFormatada(int linha, String texto) {
@@ -182,8 +183,14 @@ void printLinhaFormatada(int linha, String texto) {
   if (texto.length() > 20) {
     texto = texto.substring(0, 20);
   }
+  if (linha == 2 && texto == prevLcdLine2) {
+    return;
+  }
   if (linha == 3 && texto == prevLcdLine3) {
     return;
+  }
+  if (linha == 2) {
+    prevLcdLine2 = texto;
   }
   if (linha == 3) {
     prevLcdLine3 = texto;
@@ -236,33 +243,47 @@ void atualizarLCD() {
     lcd->print(saldoStr);
   }
 
-  // Linha 2: Poder de Clique e Taxa de Produção (MPS)
-  String taxaStr = "+" + formatarNumero(cachedClickPower) + " | ";
-  String mpsStr = " " + formatarNumero(cachedMps) + "/s";
-  int espacoRestante = 20 - 1 - (int)taxaStr.length() - 1;
-  if (espacoRestante > 0) {
-    while ((int)mpsStr.length() < espacoRestante) mpsStr += " ";
-    mpsStr = mpsStr.substring(0, espacoRestante);
-  }
-
+  // Linha 2 e 3: Modos normais ou Exibição do Site em 2 linhas sem cortes (display 4x20)
+  bool mostrarWeb2Linhas = (modoInfoLinha3 == 0 && !clickAtivo);
+  static bool prevMostrarWeb2Linhas = false;
   static String prevTaxaStr = "";
   static String prevMpsStr = "";
-  if (taxaStr != prevTaxaStr || mpsStr != prevMpsStr) {
-    prevTaxaStr = taxaStr;
-    prevMpsStr = mpsStr;
-    lcd->setCursor(0, 2);
-    lcd->write((uint8_t)3); // iconBolt
-    lcd->print(taxaStr);
-    lcd->write((uint8_t)4); // iconFactory
-    lcd->print(mpsStr);
+
+  if (mostrarWeb2Linhas != prevMostrarWeb2Linhas) {
+    prevMostrarWeb2Linhas = mostrarWeb2Linhas;
+    prevTaxaStr = ""; // Invalida cache de stats para redesenho imediato
+    prevMpsStr = "";
+    prevLcdLine2 = "";
   }
 
-  // Linha 3: Feedback de Clique ou Status Rotativo
-  if (clickAtivo) {
-    printLinhaFormatada(3, ">> CORTE EFETUADO! <<");
+  if (mostrarWeb2Linhas) {
+    // Exibição em 2 linhas no display 4x20 para nunca cortar o domínio
+    printLinhaFormatada(2, " Site: makitaclicker");
+    printLinhaFormatada(3, "       .pages.dev   ");
   } else {
-    if (modoInfoLinha3 == 0) {
-      printLinhaFormatada(3, "Web: " + webInfo);
+    // Linha 2: Poder de Clique e Taxa de Produção (MPS)
+    String taxaStr = "+" + formatarNumero(cachedClickPower) + " | ";
+    String mpsStr = " " + formatarNumero(cachedMps) + "/s";
+    int espacoRestante = 20 - 1 - (int)taxaStr.length() - 1;
+    if (espacoRestante > 0) {
+      while ((int)mpsStr.length() < espacoRestante) mpsStr += " ";
+      mpsStr = mpsStr.substring(0, espacoRestante);
+    }
+
+    if (taxaStr != prevTaxaStr || mpsStr != prevMpsStr) {
+      prevTaxaStr = taxaStr;
+      prevMpsStr = mpsStr;
+      prevLcdLine2 = "";
+      lcd->setCursor(0, 2);
+      lcd->write((uint8_t)3); // iconBolt
+      lcd->print(taxaStr);
+      lcd->write((uint8_t)4); // iconFactory
+      lcd->print(mpsStr);
+    }
+
+    // Linha 3: Feedback de Clique ou Status Rotativo
+    if (clickAtivo) {
+      printLinhaFormatada(3, ">> CORTE EFETUADO! <<");
     } else if (modoInfoLinha3 == 1) {
       if (makitas >= 99000000000.0) {
         printLinhaFormatada(3, "** META 99B FEITA! **");
@@ -280,6 +301,12 @@ void atualizarLCD() {
       printLinhaFormatada(3, "Oficinas: " + String(totalOwned) + " un.");
     } else if (modoInfoLinha3 == 3) {
       printLinhaFormatada(3, "FW: v" + String(CURRENT_FIRMWARE_VER) + " (OTA Ativo)");
+    } else if (modoInfoLinha3 == 4) {
+      if (WiFi.status() == WL_CONNECTED) {
+        printLinhaFormatada(3, "IP: " + WiFi.localIP().toString());
+      } else {
+        printLinhaFormatada(3, "WiFi: Desconectado  ");
+      }
     } else {
       printLinhaFormatada(3, " MakerSpace UNIFEI  ");
     }
@@ -737,7 +764,12 @@ void setup() {
   printLinhaFormatada(0, "====================");
   printLinhaFormatada(1, "   MAKITA CLICKER   ");
   printLinhaFormatada(2, "  MakerSpace UNIFEI ");
-  printLinhaFormatada(3, "   Edicao 99B v4.0  ");
+  String verLine = "Edicao 99B v" + String(CURRENT_FIRMWARE_VER);
+  int pad = max(0, (20 - (int)verLine.length()) / 2);
+  String centeredVer = "";
+  for (int p = 0; p < pad; p++) centeredVer += " ";
+  centeredVer += verLine;
+  printLinhaFormatada(3, centeredVer);
 
   // Carrega save da flash LittleFS imediatamente
   loadLocalGameState();
@@ -809,7 +841,7 @@ void loop() {
   // 4. Rotação de informações da Linha 3 a cada 3.2s
   if (now - ultimoTickInfo >= 3200) {
     ultimoTickInfo = now;
-    modoInfoLinha3 = (modoInfoLinha3 + 1) % 5;
+    modoInfoLinha3 = (modoInfoLinha3 + 1) % 6;
     precisaAtualizarLCD = true;
   }
 
