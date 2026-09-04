@@ -1,99 +1,213 @@
-# 🔧 MakitaClicker
+# 🔧 MakitaClicker — Guia Completo do Sistema
 
-> Projeto desenvolvido pelo **MakerSpace UNIFEI**
->
-> **Autores:** Nicolae Maximus T. N. Lopes · Victor Augusto de A. Silvério · Oliver Daniel Schiinke
-
-MakitaClicker é um jogo estilo *cookie clicker* físico-digital, onde o jogador acumula "Makitas" clicando em um botão físico ou através de uma interface web. O sistema roda de forma autônoma num **ESP8266 NodeMCU**, com painel LCD 20×4 I2C, sincronização cloud em tempo real e **atualização automática de firmware via nuvem (OTA)**.
+> **MakerSpace UNIFEI**  
+> **Autores:** Nicolae Maximus T. N. Lopes · Victor Augusto de A. Silvério · Oliver Daniel Schiinke  
+> **Link de Produção:** [https://makitaclicker.pages.dev](https://makitaclicker.pages.dev)  
+> **API Serverless:** [https://makitaclicker.pages.dev/api/state](https://makitaclicker.pages.dev/api/state)  
+> **Manifesto OTA:** [https://makitaclicker.pages.dev/version.json](https://makitaclicker.pages.dev/version.json)
 
 ---
 
-## 📂 Estrutura do Repositório
+## 📖 Visão Geral do Projeto
+
+O **MakitaClicker** é um jogo incremental (*cookie clicker*) híbrido físico-digital. O objetivo do jogo é acumular "Makitas" até atingir a grande meta cósmica de **99 Bilhões (99B)**. 
+
+O diferencial do projeto é sua integração completa entre hardware e web:
+1. **Console Físico Autônomo:** Um microcontrolador **ESP8266 NodeMCU** com botão mecânico industrial de alta durabilidade e um display **LCD 20×4 I2C**. Funciona com latência de clique de 0ms, salva o progresso na memória flash interna (**LittleFS**) e sincroniza pela internet via Wi-Fi.
+2. **Interface Web Moderna:** Roda em qualquer navegador (desktop ou mobile) a **60 FPS** com persistência em `localStorage`, loja de oficinas, árvore tecnológica de habilidades permanentes (*Skill Tree*) e aba exclusiva de telemetria em tempo real do hardware.
+3. **Backend Serverless (Cloudflare Pages & KV):** Reconciliação contínua e tolerante a falhas (CRDT Ratchet Monotônico), garantindo que cliques físicos e virtuais somem ao mesmo saldo global sem perdas de progresso.
+4. **CI/CD e Firmware OTA Automático:** A cada `git push` no repositório GitHub, a Cloudflare compila a aplicação web e também compila o código C++ do ESP8266 via `arduino-cli`. A ESP baixa a nova versão de firmware pelo ar (Over-The-Air) automaticamente, sem necessidade de cabos.
+
+---
+
+## 🏗️ Arquitetura do Sistema
+
+```
+                        ┌────────────────────────────────────────┐
+                        │      Cloudflare Edge CDN Global        │
+                        │        makitaclicker.pages.dev         │
+                        └───────────────────┬────────────────────┘
+                                            │
+               ┌────────────────────────────┼────────────────────────────┐
+               │ HTTPS (Assets Estáticos)   │ HTTPS REST (/api/state)    │ HTTPS OTA (firmware.bin)
+               ▼                            ▼                            ▼
+    ┌──────────────────────┐    ┌──────────────────────┐    ┌──────────────────────┐
+    │     Navegador        │    │ Cloudflare Functions │    │  ESP8266 NodeMCU     │
+    │  (Desktop / Mobile)  │◀──▶│   + Cloudflare KV    │◀──▶│  (Hardware Físico)   │
+    │                      │    │   (Banco de Dados)   │    │                      │
+    │ - Motor 60 FPS       │    └──────────────────────┘    │ - Display LCD 20x4   │
+    │ - Loja de Oficinas   │                                │ - Botão Físico (D5)  │
+    │ - Árvore Tecnológica │                                │ - Flash LittleFS     │
+    │ - Aba Status & HW    │                                │ - Auto-Update OTA    │
+    └──────────────────────┘                                └──────────────────────┘
+```
+
+---
+
+## 📂 Estrutura de Diretórios
 
 ```
 MakitaClicker/
 │
-├── web/                        # 🌐 Interface Web (Cloudflare Pages)
-│   ├── index.html              # Marcação DOM semântica e limpa
-│   ├── style.css               # Folha de estilo completa e responsiva
-│   ├── game.js                 # Motor de jogo 60 FPS, reconciliação e LocalStorage
-│   ├── images/                 # Imagens e ícones
-│   └── makitaCoracao.png       # Logo
+├── web/                           # 🌐 Frontend Web (HTML5, CSS3, ES6+)
+│   ├── index.html                 # Estrutura semântica e abas de navegação
+│   ├── style.css                  # Folha de estilo centralizada (tema escuro industrial)
+│   ├── game.js                    # Motor de jogo 60 FPS, render throttled e telemetria
+│   ├── images/                    # Sprites, favicons e ícones
+│   └── README.md                  # Documentação detalhada da Web
 │
-├── functions/                  # ☁️ API Serverless (Cloudflare Pages Functions)
+├── functions/                     # ☁️ Backend Serverless (Cloudflare Pages Functions)
 │   └── api/
-│       └── state.js            # Endpoints GET e POST /api/state (Cloudflare KV Master)
+│       └── state.js               # API REST /api/state, KV ratchet e controle de cota
 │
-├── firmware/                   # 🔌 Firmware do Microcontrolador
-│   ├── codigo_esp/             # ESP8266 NodeMCU (Display LCD 20x4, Botão D5, LittleFS, Wi-Fi, OTA)
-│   │   └── codigo_esp.ino
-│   ├── projeto/                # Esquemático KiCad da PCB
-│   └── GAME_DESIGN.md          # Documento de design do jogo
+├── firmware/                      # 🔌 Código-fonte e Hardware Embarcado
+│   ├── codigo_esp/                # Firmware da ESP8266 NodeMCU
+│   │   └── codigo_esp.ino         # Sketch C++ Arduino autônomo (LCD, LittleFS, OTA)
+│   ├── projeto/                   # Arquivos de projeto de hardware (KiCad PCB)
+│   ├── GAME_DESIGN.md             # Tabela de balanceamento, custos e fórmulas
+│   └── README.md                  # Manual completo de hardware e pinagem
 │
-├── build.sh                    # Script CI/CD (Cloudflare Pages)
-└── online/                     # Diretório de publicação (gerado pelo build)
-```
-
-### 🌐 Parte Web (`web/` + `functions/`)
-
-A interface web e API serverless hospedadas no Cloudflare Pages. O frontend é desacoplado em HTML, CSS e JS modular, com renderização a 60 FPS e persistência automática em `localStorage`. Veja detalhes em [web/README.md](web/README.md).
-
-- **Frontend:** `https://makitaclicker.pages.dev/`
-- **API:** `https://makitaclicker.pages.dev/api/state`
-
-### 🔌 Parte Firmware (`firmware/`)
-
-Firmware único e autônomo para ESP8266 NodeMCU. Controla diretamente o display LCD 20×4 I2C e o botão físico no pino D5, com persistência na memória flash via **LittleFS**, cache de cálculos (MPS) e double-buffering seletivo no LCD para eliminar cintilações. Veja detalhes em [firmware/README.md](firmware/README.md).
-
----
-
-## ⚙️ Como Funciona e Sincronização Inteligente (Cloud Master / Client Slave)
-
-O sistema opera com sincronização bidirecional onde a **nuvem (Cloudflare KV) e a Web atuam como Master**:
-
-1. **Botão Físico:** O jogador pressiona o botão conectado ao pino D5 da NodeMCU. O ESP processa o clique instantaneamente (0ms), soma as Makitas no LCD e acumula os cliques para envio à nuvem.
-2. **Interface Web:** Dispositivos acessam `https://makitaclicker.pages.dev`. O motor local roda a 60 FPS e sincroniza via REST a cada 5 segundos com o Cloudflare KV.
-3. **Resolução de Conflitos (Master / Slave):**
-   - O Cloudflare KV dita o estado para todos os clientes conectados.
-   - A ESP adota sempre o saldo e oficinas da Web/KV.
-   - A única exceção é se a ESP acumular saldo superior no jogo offline (botão físico), caso em que a nuvem aceita o saldo maior da ESP.
-
-```
-[ Botão Físico (D5) ] ──▶ [ ESP8266 NodeMCU ] ──I2C──▶ [ LCD 20x4 ]
-                                 │
-                                 │ HTTPS (Sync 5s)
-                                 ▼
-                     [ Cloudflare Pages & KV ]
-                     [ makitaclicker.pages.dev ]
-                                 ▲
-                                 │ HTTPS REST (Sync 5s)
-                     [ Clientes Web / Celular ]
+├── build.sh                       # 🚀 Script de CI/CD executado pela Cloudflare
+└── online/                        # Pasta de saída pública gerada durante o build
 ```
 
 ---
 
-## ☁️ Pipeline CI/CD — Cloudflare Pages
+## 🌐 Como Funciona o Site (`web/`)
 
-A cada `git push`, o Cloudflare Pages executa [`build.sh`](build.sh):
+O frontend foi desenvolvido com foco em alta performance, responsividade e desacoplamento modular completo:
 
-1. Copia os assets web modulares (`web/index.html`, `style.css`, `game.js`, imagens) para `online/`
-2. Instala dependências do Arduino (`ArduinoJson`, `LiquidCrystal I2C`) e compila o firmware do ESP8266 via `arduino-cli` → gera `online/firmware.bin`
-3. Gera o manifesto `online/version.json` com versionamento automático por commits
-
-Artefatos publicados na CDN global:
-- `https://makitaclicker.pages.dev/` — Interface Web
-- `https://makitaclicker.pages.dev/api/state` — API Serverless (Cloudflare KV)
-- `https://makitaclicker.pages.dev/version.json` — Manifesto OTA
-- `https://makitaclicker.pages.dev/firmware.bin` — Binário do ESP8266
+1. **Ciclo Gráfico a 60 FPS (`gameLoop`):**
+   - Executa via `requestAnimationFrame`.
+   - Calcula a produção passiva contínua pelo delta de tempo (`dt`), somando frações precisas de Makitas a cada quadro.
+   - Atualiza o contador de saldo e a taxa de MPS a 60 FPS para máxima fluidez visual.
+2. **Renderização Otimizada com Throttling (6 FPS):**
+   - Listas de compras, botões de oficinas e status de requisitos da árvore tecnológica são atualizados a ~6 FPS (ou imediatamente quando o estado fica *dirty*). Isso evita gargalos de repintura do DOM, mantendo o consumo de CPU abaixo de 1%.
+3. **Abas de Navegação:**
+   - **🌳 Melhorias Permanentes:** Árvore tecnológica (*Skill Tree*) com pré-requisitos visuais conectando nós pai e filho, multiplicadores globais aditivos e bônus de clique.
+   - **📊 Estatísticas:** Total histórico produzido, oficinas ativas, multiplicadores e botão de **Reset Total**.
+   - **📡 Status & Hardware:** Monitoramento ao vivo do microcontrolador físico (veja abaixo).
+4. **Aba "📡 Status & Hardware":**
+   - **LED Pulsante:** Verde para ESP online (contato há menos de 90s), laranja se sem sinal recente, cinza se desconectada.
+   - **Ping / Latência:** Medição em tempo real da conexão HTTP entre o navegador e os servidores da Cloudflare.
+   - **Comparativo de Firmware:** Versão remota (`version.json`) vs. versão instalada no chip físico.
+   - **Telemetria do Microcontrolador:** RSSI do sinal Wi-Fi (em dBm com classificação de qualidade), IP local na rede, Uptime (tempo de atividade) e RAM livre (Heap).
+   - **Diagnóstico Cloudflare KV:** Indica se o banco está ativo e qual o binding em uso.
+   - **Handshake de Reset:** Indica se há ordem de limpeza pendente aguardando confirmação da ESP.
+   - **Botão "🔄 Atualizar Agora":** Dispara teste instantâneo de latência e sincronização de dados.
 
 ---
 
-## 🚀 Como Fazer um Release
+## 🔌 Como Funciona o Firmware (`firmware/codigo_esp/`)
 
-```bash
-git add .
-git commit -m "feat: atualizacao do sistema"
-git push origin main
+A placa **ESP8266 NodeMCU** é 100% autônoma e opera sem necessidade de qualquer microcontrolador secundário:
+
+1. **Clock a 160 MHz:** A CPU roda em frequência máxima (`system_update_cpu_freq(160)`) para processar requisições HTTPS com TLS moderno e desenhar o LCD sem atrasos.
+2. **Botão Físico com Resposta de 0 ms:** Conectado ao pino **D5** (`INPUT_PULLUP`). Usa filtro de debounce por hardware/software de 25ms. O clique incrementa o saldo local na mesma fração de milissegundo, garantindo resposta tátil instantânea.
+3. **Display LCD 20×4 I2C Inteligente:**
+   - **Linha 0:** Título do jogo com animação do disco de serra giratório (alternando frames na memória CGRAM) e faíscas dinâmicas a cada clique.
+   - **Linha 1:** Ícone de moeda/troféu e Saldo formatado em notação compacta (`k`, `M`, `B`, `T`, `Qa`).
+   - **Linhas 2 e 3 (Exibição sem cortes do Site):** Como o domínio `makitaclicker.pages.dev` possui 23 caracteres, o firmware utiliza as Linhas 2 e 3 em conjunto (`Site: makitaclicker` e `      .pages.dev`), eliminando qualquer corte de texto.
+   - **Telas Rotativas:** A cada 3,2 segundos, a Linha 3 alterna entre:
+     1. Endereço completo do Site
+     2. Progresso da Meta 99B (`Meta 99B: XX.XX%`)
+     3. Total de Oficinas construídas
+     4. Versão de Firmware (`FW: vXX (OTA Ativo)`)
+     5. Endereço IP Local (`IP: 192.168.x.x`)
+     6. MakerSpace UNIFEI
+   - **Double-Buffering:** Só retransmite para o barramento I2C caracteres de linhas que realmente mudaram, eliminando qualquer cintilação (*flicker*).
+4. **Persistência na Memória Flash (LittleFS):** O estado é salvo no arquivo `/gamestate.json` a cada 15 segundos ou antes de reiniciar. Se faltar energia, o saldo não se perde.
+5. **Telemetria Contínua:** A cada 5 segundos, a ESP envia à nuvem seu endereço IP, versão de firmware instalada, RSSI de Wi-Fi, Uptime e RAM livre.
+
+---
+
+## 🤝 Handshake de Reset Bidirecional
+
+Para evitar que o progresso seja resetado acidentalmente no site enquanto a ESP8266 mantém um saldo antigo offline (o que geraria ressurgimento do save):
+
+1. Quando o jogador clica em **"⚠️ Resetar Todo o Progresso"** no site:
+   - O Cloudflare KV zera o saldo e as melhorias e ativa a flag `resetPendingEsp: true` com um `resetId` incrementado.
+2. A nuvem **continua emitindo a ordem de reset** em todas as respostas de sincronização para a ESP8266.
+3. Ao receber `resetOrder: true`, a ESP8266:
+   - Zera seu saldo e oficinas em RAM.
+   - Apaga o arquivo `/gamestate.json` no LittleFS.
+   - Exibe a mensagem de reset no LCD 20×4.
+   - No próximo ciclo de sincronização, envia a confirmação `resetAck: true`.
+4. Apenas quando a nuvem recebe o `resetAck: true` da ESP, a flag `resetPendingEsp` é desativada, encerrando o ciclo com segurança absoluta.
+
+---
+
+## ☁️ Como Funciona o Build Remoto (CI/CD na Cloudflare Pages)
+
+Toda vez que você executa `git push origin main`, o pipeline no Cloudflare Pages roda automaticamente o script [`build.sh`](build.sh):
+
+```mermaid
+flowchart TD
+    A[git push origin main] --> B[Cloudflare Pages Runner]
+    B --> C[Executa build.sh]
+    C --> D[git fetch --unshallow & calcula VERSION pelo número de commits]
+    D --> E[Patcha CURRENT_FIRMWARE_VER no codigo_esp.ino via sed]
+    E --> F[Instala arduino-cli + core esp8266:esp8266]
+    F --> G[Instala bibliotecas: ArduinoJson e LiquidCrystal I2C]
+    G --> H[Copia web/* para pasta online/]
+    H --> I[Compila codigo_esp.ino gerando firmware.bin]
+    I --> J[Gera version.json com versão e URL de download]
+    J --> K[Publica pasta online/ na CDN Global Cloudflare Pages]
+    K --> L[ESP8266 detecta novo version.json e atualiza via OTA]
 ```
 
-O Cloudflare Pages compilará tudo automaticamente. Na próxima inicialização (ou no ciclo automático de 5 minutos), o ESP8266 baixa e aplica o firmware atualizado via OTA!
+### Detalhes das Etapas do `build.sh`:
+1. **Contagem de Versão:** Faz `git fetch --unshallow` e obtém `git rev-list --count HEAD` (ex: versão 63).
+2. **Patch Automático:** Substitui `#define CURRENT_FIRMWARE_VER` diretamente no arquivo `codigo_esp.ino` antes da compilação.
+3. **Instalação do `arduino-cli`:** Baixa o binário oficial do compilador Arduino para Linux x86_64.
+4. **Instalação do Core e Dependências:** Configura o repositório da ESP8266 e instala o core `esp8266:esp8266:nodemcuv2` e as bibliotecas necessárias.
+5. **Compilação Headless:** Compila o código C++ gerando o binário `online/firmware.bin`.
+6. **Manifesto OTA:** Cria o arquivo `online/version.json` com o número exato da versão e o link HTTPS do binário.
+7. **Deploy Imediato:** Os arquivos estáticos e as Cloudflare Functions entram no ar em menos de 1 minuto em escala global.
+
+---
+
+## 🛠️ Como Editar e Personalizar
+
+### 1. Alterar Credenciais do Wi-Fi
+Abra [`firmware/codigo_esp/codigo_esp.ino`](firmware/codigo_esp/codigo_esp.ino) e modifique as linhas:
+```cpp
+const char* ssid     = "NOME_DA_SUA_REDE";
+const char* password = "SENHA_DO_SEU_WIFI";
+```
+Faça o commit e push. Na próxima conexão, ou gravando manualmente via USB, a ESP conectará na nova rede.
+
+### 2. Adicionar ou Modificar Oficinas (Loja)
+As oficinas devem ter suas configurações espelhadas para manter paridade entre Web, Cloud e ESP:
+- **No Servidor:** [`functions/api/state.js`](functions/api/state.js) (array `UPGRADES`).
+- **No Frontend:** [`web/game.js`](web/game.js) (array `upgrades`).
+- **No Firmware:** [`firmware/codigo_esp/codigo_esp.ino`](firmware/codigo_esp/codigo_esp.ino) (struct `UPGRADE_CONFIGS`).
+
+### 3. Adicionar Habilidades na Árvore Tecnológica
+- Defina o nó no array `PERMANENT_UPGRADES` em [`functions/api/state.js`](functions/api/state.js) e [`web/game.js`](web/game.js), indicando `id`, `name`, `cost`, `req` (total acumulado necessário) e `parent` (habilidade pré-requisito).
+- Se a habilidade tiver efeito na produção física da ESP, adicione a respectiva variável booleana em [`firmware/codigo_esp/codigo_esp.ino`](firmware/codigo_esp/codigo_esp.ino) dentro da função `recalculateStats()`.
+
+### 4. Testes Locais da Web
+Você pode abrir o arquivo [`web/index.html`](web/index.html) diretamente no navegador (via extensão Live Server ou duplo clique). O motor gráfico detecta que o protocolo é `file:` ou `localhost` e entra em **Modo Simulador Offline**, permitindo testar todas as animações, árvores e cálculos sem necessidade de conexão com a Cloudflare.
+
+---
+
+## ⚡ Conexões Físicas do Hardware (Pinout)
+
+| Dispositivo | Pino no Módulo | Pino na NodeMCU | Observações |
+|---|---|---|---|
+| **LCD 20×4 I2C** | **GND** | **GND** | Terra comum |
+| **LCD 20×4 I2C** | **VCC** | **VV (ou VU)** | Alimentação 5V fornecida pela porta micro-USB |
+| **LCD 20×4 I2C** | **SDA** | **D2 (GPIO 4)** | Linha de dados do barramento I2C |
+| **LCD 20×4 I2C** | **SCL** | **D1 (GPIO 5)** | Linha de clock do barramento I2C |
+| **Botão Físico** | **Pino A** | **D5 (GPIO 14)** | Configurado como `INPUT_PULLUP` |
+| **Botão Físico** | **Pino B** | **GND** | Fecha o circuito no terra ao ser pressionado |
+
+> **Nota sobre Alimentação:** O pino **VV** da NodeMCU é conectado diretamente ao VBUS da porta micro-USB (fornecendo 5V reais). O módulo LCD 20×4 requer 5V para o contraste correto do cristal líquido; alimentá-lo no 3V3 deixará o texto invisível ou fraco.
+
+---
+
+## 📜 Licença e Créditos
+
+Desenvolvido com dedicação pelos membros do **MakerSpace UNIFEI**.  
+Disponível para fins educacionais, acadêmicos e projetos de cultura maker.
