@@ -156,17 +156,37 @@ function getTotalOwned(owned) {
 }
 
 function getKV(env) {
-  if (!env) return { kv: null, name: null };
+  if (!env) {
+    return { kv: null, name: null, diag: 'Objeto context.env não fornecido pelo Cloudflare Pages.' };
+  }
   if (env.MAKITA_KV && typeof env.MAKITA_KV.get === 'function') {
-    return { kv: env.MAKITA_KV, name: 'MAKITA_KV' };
+    return { kv: env.MAKITA_KV, name: 'MAKITA_KV', diag: 'MAKITA_KV conectado com sucesso.' };
   }
   for (const [key, val] of Object.entries(env)) {
     if (key === 'ASSETS') continue; // Ignora o repositório interno de assets estáticos do Pages
     if (val && typeof val.get === 'function' && typeof val.put === 'function') {
-      return { kv: val, name: key };
+      return { kv: val, name: key, diag: `KV detectado via binding alternativo: '${key}'` };
     }
   }
-  return { kv: null, name: null };
+
+  // Diagnóstico detalhado para troubleshooting no Cloudflare Pages
+  const keys = Object.keys(env).filter(k => k !== 'ASSETS');
+  const makitaType = typeof env.MAKITA_KV;
+  let diag = '';
+
+  if (makitaType === 'string') {
+    diag = "Atenção: MAKITA_KV está definida como STRING (Variável de Ambiente comum). No Cloudflare Pages, ela deve ser vinculada como 'KV namespace binding' em Settings > Functions > KV namespace bindings.";
+  } else if (makitaType === 'undefined') {
+    if (keys.length === 0) {
+      diag = "Nenhum binding ou variável foi injetado neste deploy. Se você já configurou o binding no painel, é OBRIGATÓRIO disparar um NOVO deploy (ou clicar em 'Retry deployment') para que a Cloudflare aplique as alterações.";
+    } else {
+      diag = `Binding MAKITA_KV não encontrado em env (chaves presentes: [${keys.join(', ')}]). Se configurou recentemente, dispare um novo deploy.`;
+    }
+  } else {
+    diag = `MAKITA_KV está presente como '${makitaType}', mas não possui os métodos esperados de KV (.get / .put).`;
+  }
+
+  return { kv: null, name: null, diag };
 }
 
 // Produção passiva autoritativa baseada no delta de tempo.
@@ -190,12 +210,12 @@ function advancePassiveProduction(state, now) {
 }
 
 async function loadState(env) {
-  const { kv, name } = getKV(env);
+  const { kv, name, diag } = getKV(env);
   if (kv) {
     try {
       const data = await kv.get(KV_KEY, { type: 'json' });
       if (data && typeof data === 'object') {
-        return { state: data, kvName: name, kvConnected: true };
+        return { state: data, kvName: name, kvConnected: true, kvDiag: diag };
       }
     } catch (err) {
       console.error(`[KV] Erro ao ler KV (${name}):`, err);
@@ -204,7 +224,7 @@ async function loadState(env) {
   if (!memoryFallbackState) {
     memoryFallbackState = getDefaultState();
   }
-  return { state: memoryFallbackState, kvName: name, kvConnected: !!kv };
+  return { state: memoryFallbackState, kvName: name, kvConnected: !!kv, kvDiag: diag };
 }
 
 async function saveState(env, state) {
@@ -227,7 +247,7 @@ export async function onRequestOptions() {
 
 export async function onRequestGet(context) {
   const { env } = context;
-  const { state, kvName, kvConnected } = await loadState(env);
+  const { state, kvName, kvConnected, kvDiag } = await loadState(env);
   const now = Date.now();
 
   advancePassiveProduction(state, now);
@@ -239,7 +259,8 @@ export async function onRequestGet(context) {
     ...state,
     resetOrder: state.resetPendingEsp === true,
     _kv_connected: kvConnected,
-    _kv_binding: kvName || 'NONE'
+    _kv_binding: kvName || 'NONE',
+    _kv_diag: kvDiag
   }), {
     status: 200,
     headers: CORS_HEADERS
@@ -255,7 +276,7 @@ export async function onRequestPost(context) {
     // Body vazio ou malformado
   }
 
-  const { state, kvName, kvConnected } = await loadState(env);
+  const { state, kvName, kvConnected, kvDiag } = await loadState(env);
   const now = Date.now();
   const previousMakitas = state.makitas || 0;
   advancePassiveProduction(state, now);
@@ -279,7 +300,8 @@ export async function onRequestPost(context) {
       isReset: true,
       resetOrder: true,
       _kv_connected: kvConnected,
-      _kv_binding: kvName || 'NONE'
+      _kv_binding: kvName || 'NONE',
+      _kv_diag: kvDiag
     }), {
       status: 200,
       headers: CORS_HEADERS
@@ -432,7 +454,8 @@ export async function onRequestPost(context) {
     ...state,
     resetOrder: state.resetPendingEsp === true,
     _kv_connected: kvConnected,
-    _kv_binding: kvName || 'NONE'
+    _kv_binding: kvName || 'NONE',
+    _kv_diag: kvDiag
   }), {
     status: 200,
     headers: CORS_HEADERS

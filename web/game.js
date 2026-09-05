@@ -891,7 +891,7 @@ function applyServerState(data) {
             logEl.textContent = `🟢 Nuvem ativa: Cloudflare KV (${data._kv_binding}) conectado`;
             logEl.style.color = 'var(--text-lo)';
         } else {
-            logEl.textContent = '⚠️ KV não vinculado no Cloudflare Pages (Pages > Settings > Functions > KV)';
+            logEl.textContent = data._kv_diag ? `⚠️ ${data._kv_diag}` : '⚠️ KV não vinculado no Cloudflare Pages (Pages > Settings > Functions > KV)';
             logEl.style.color = 'var(--orange)';
         }
     }
@@ -1094,7 +1094,7 @@ function updateStatusUI() {
             } else {
                 statKvStatus.textContent = '🟡 Memória Volátil (Sem KV)';
                 statKvStatus.style.color = 'var(--orange)';
-                statKvBinding.textContent = 'Binding ausente no Cloudflare';
+                statKvBinding.textContent = latestServerData._kv_diag ? latestServerData._kv_diag : 'Binding ausente no Cloudflare';
             }
         }
     }
