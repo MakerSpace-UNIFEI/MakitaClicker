@@ -68,6 +68,10 @@ double makitas = 0.0;
 const int MAX_OWNED = 100;
 int pendingPhysicalClicks = 0;
 
+// Top Player do Ranking recebido da Nuvem
+String topPlayerName = "";
+double topPlayerMakitas = 0.0;
+
 const UpgradeConfig UPGRADE_CONFIGS[NUM_UPGRADES] = {
   { "upgrade1",          10.0,         1.10, 0.1 },        // +0.1 MPS
   { "upgrade_1mps",      100.0,        1.12, 1.0 },        // +1.0 MPS
@@ -285,6 +289,17 @@ void atualizarLCD() {
     if (clickAtivo) {
       printLinhaFormatada(3, ">> CORTE EFETUADO! <<");
     } else if (modoInfoLinha3 == 1) {
+      if (topPlayerName.length() > 0 && topPlayerName != "MakerSpace") {
+        String topStr = "Top: " + topPlayerName;
+        if (topPlayerMakitas > 0) {
+          topStr += " (" + formatarNumero(topPlayerMakitas) + ")";
+        }
+        if (topStr.length() > 20) topStr = topStr.substring(0, 20);
+        printLinhaFormatada(3, topStr);
+      } else {
+        printLinhaFormatada(3, "Top 1: MakerSpace");
+      }
+    } else if (modoInfoLinha3 == 2) {
       if (makitas >= 99000000000.0) {
         printLinhaFormatada(3, "** META 99B FEITA! **");
       } else {
@@ -295,13 +310,13 @@ void atualizarLCD() {
           printLinhaFormatada(3, "Meta 99B: " + String(pct, (pct < 10.0 ? 2 : 1)) + "%");
         }
       }
-    } else if (modoInfoLinha3 == 2) {
+    } else if (modoInfoLinha3 == 3) {
       int totalOwned = 0;
       for (int i = 0; i < NUM_UPGRADES; i++) totalOwned += ownedUpgrades[i];
       printLinhaFormatada(3, "Oficinas: " + String(totalOwned) + " un.");
-    } else if (modoInfoLinha3 == 3) {
-      printLinhaFormatada(3, "FW: v" + String(CURRENT_FIRMWARE_VER) + " (OTA Ativo)");
     } else if (modoInfoLinha3 == 4) {
+      printLinhaFormatada(3, "FW: v" + String(CURRENT_FIRMWARE_VER) + " (OTA Ativo)");
+    } else if (modoInfoLinha3 == 5) {
       if (WiFi.status() == WL_CONNECTED) {
         printLinhaFormatada(3, "IP: " + WiFi.localIP().toString());
       } else {
@@ -657,6 +672,16 @@ void syncWithCloud() {
         if (permsObj["perm_onipotencia_maker"] | false) permOnipotenciaMaker = true;
       }
 
+      // 3. TELEMETRIA DO LÍDER DO RANKING (TOP PLAYER):
+      if (doc["topPlayer"].is<JsonObject>()) {
+        JsonObject topObj = doc["topPlayer"];
+        const char* tName = topObj["name"] | "";
+        if (strlen(tName) > 0) {
+          topPlayerName = String(tName);
+          topPlayerMakitas = topObj["makitas"] | 0.0;
+        }
+      }
+
       recalculateStats();
       saveLocalGameState();
       precisaAtualizarLCD = true;
@@ -841,7 +866,7 @@ void loop() {
   // 4. Rotação de informações da Linha 3 a cada 3.2s
   if (now - ultimoTickInfo >= 3200) {
     ultimoTickInfo = now;
-    modoInfoLinha3 = (modoInfoLinha3 + 1) % 6;
+    modoInfoLinha3 = (modoInfoLinha3 + 1) % 7;
     precisaAtualizarLCD = true;
   }
 

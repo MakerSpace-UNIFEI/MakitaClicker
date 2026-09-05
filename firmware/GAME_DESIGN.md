@@ -137,7 +137,10 @@ As melhorias permanentes fornecem **multiplicadores e bônus diretos** tanto na 
 - **Linha 1:** Saldo formatado (`[Coin] Saldo: 99.0B MKT` ou `[Trophy] Saldo: 99.0B MKT!`).
 - **Linha 2:** Poder de corte e taxa de produção compactados (`[Bolt]+2.5k | [Factory] 15.0M/s`).
 - **Linha 3:** Feedback instantâneo (`>> CORTE EFETUADO! <<`) ou carrossel rotativo:
+  - `Site: makitaclicker.pages.dev`
+  - `Top: <nome> (<saldo>)` (Líder global recebido do backend)
   - `Oficinas: X un.`
   - `Meta 99B: XX.X%` (ou `** META 99B FEITA! **`)
+  - `FW: vXX (OTA Ativo)`
+  - `IP: 192.168.x.x`
   - `MakerSpace UNIFEI`
-  - `Web: esp-painel.local`

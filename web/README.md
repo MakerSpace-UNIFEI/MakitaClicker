@@ -25,15 +25,24 @@ web/
 
 ### 1. Separação Estrita de Responsabilidades
 - **`index.html`**: Isento de lógica ou estilos inline. Organizado em três colunas industriais:
-  - **Coluna Esquerda:** Big Button de clique (Makita giratória), contador de saldo a 60 FPS e taxa de Makitas Por Segundo (MPS).
-  - **Coluna Central:** Abas de navegação (**🌳 Melhorias Permanentes**, **📊 Estatísticas**, **📡 Status & Hardware**).
+  - **Coluna Esquerda:** Big Button de clique (Makita giratória), contador de saldo fluido e taxa de Makitas Por Segundo (MPS).
+  - **Coluna Central:** Barra de perfil de usuário (`.profile-bar`), abas de navegação (**🌳 Melhorias Permanentes**, **📊 Estatísticas**, **📡 Status & Hardware**).
   - **Coluna Direita:** Loja de Oficinas com seletores de quantidade (`1`, `10`, `MAX`).
-- **`style.css`**: Design system temático industrial escuro baseado nas cores da Makita (azul-petróleo `#008080`, laranja `#ff8f43` e vermelho `#ff3d00`). Animações aceleradas por GPU (`@keyframes pulseGreen`, `@keyframes spinBlade`).
+  - **Modal de Perfis (`#profileModal`):** Interface de abertura/troca com lista de perfis salvos no KV e formulário para criar novos jogadores instantaneamente.
+- **`style.css`**: Design system temático industrial escuro baseado nas cores da Makita (azul-petróleo `#008080`, laranja `#ff8f43` e vermelho `#ff3d00`). Animações aceleradas por GPU (`@keyframes pulseGreen`, `@keyframes spinBlade`), modal de login e badges de status de salvamento.
 - **`game.js`**: Motor autônomo desacoplado em camadas:
-  1. *Camada de Simulação Contínua:* `gameLoop` a 60 FPS com delta de tempo.
+  1. *Camada de Simulação Contínua:* `gameLoop` fluido com `requestAnimationFrame` na taxa nativa do monitor, calculando produção passiva pelo delta de tempo (`dt`).
   2. *Camada de Renderização Throttled:* Executa a ~6 FPS para botões de compra, mantendo uso de CPU desprezível.
-  3. *Camada de Persistência Local:* `localStorage` atualizado a cada evento e salvo com `sendBeacon` ao fechar o navegador.
-  4. *Camada de Rede e Telemetria:* Sincronização em segundo plano via `fetch('/api/state')` a cada 5 segundos.
+  3. *Camada de Perfis e Persistência Local:* Armazena o save isolado em `localStorage` sob `makita_clicker_state_<userId>` e perfil ativo em `makita_clicker_profile_id`.
+  4. *Camada de Sincronização Cloud:* Auto-save no Cloudflare KV a cada 3 minutos, salvamento manual com feedback visual e guarda `beforeunload` para progresso não salvo há mais de 5 minutos.
+  5. *Camada de Telemetria:* Monitoramento em tempo real do microcontrolador físico e latência da Cloudflare.
+
+---
+
+## 👤 Sistema de Perfis de Usuário
+- **Sem Senha:** Pensado para usabilidade instantânea no laboratório e na web; basta digitar um apelido ou escolher um perfil existente.
+- **Isolamento de Progresso:** Saldo, oficinas adquiridas e nós da árvore tecnológica são exclusivos de cada jogador.
+- **Leaderboard Global / Top Player:** O jogador com maior saldo é calculado no backend e transmitido tanto para o display LCD da ESP8266 física quanto para a aba de estatísticas.
 
 ---
 
@@ -62,38 +71,27 @@ Implementada para monitorar a saúde e o status do console físico em tempo real
 A API roda em Workers da Cloudflare no modelo Edge Computing (baixa latência mundial).
 
 ### Endpoints
-- **`GET /api/state`**: Retorna o estado autoritativo completo e processa a produção passiva decorrida.
-- **`POST /api/state`**: Executa ações de jogo com garantia de convergência.
+- **`GET /api/state?action=list_users`**: Retorna a lista de todos os perfis cadastrados (`id`, `name`, `createdAt`, `lastSeen`, `makitas`).
+- **`GET /api/state?userId=<id>`**: Carrega o estado individual do jogador especificado + dados do `topPlayer`.
+- **`GET /api/state`**: Retorna o estado global (utilizado pelo hardware da ESP8266) + dados do `topPlayer`.
+- **`POST /api/state`**: Executa ações autoritativas e salvamentos no Cloudflare KV.
 
-### Payload de Ações (`POST`):
+### Formato Compactado do Estado (KV):
+Para manter o tráfego minúsculo e respeitar a cota diária gratuita do Cloudflare KV:
 ```json
 {
-  "action": "sync" | "buy" | "perm_buy" | "reset",
-  "source": "esp" | "web",
-  "clicks": 5,
-  "makitas": 12500.5,
-  "upgradeId": "upgrade1",
-  "qty": "max",
-  "permId": "perm_lubrificante",
-  "resetAck": true,
-  "fwVersion": 63,
-  "ip": "192.168.1.150",
-  "rssi": -55,
-  "uptime": 3600,
-  "freeHeap": 41500
+  "makitas": 1250000.5,
+  "totalAccumulated": 3500000.0,
+  "upgrades": [15, 10, 5, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  "perms": [0, 1, 2, 4]
 }
 ```
 
-### Regras de Reconciliação Monotônica (CRDT Ratchet)
-1. **Saldos:** O saldo da partida nunca retrocede (`state.makitas = Math.max(state.makitas, clientMakitas)`).
-2. **Oficinas:** Cada oficina adota sempre o maior nível registrado entre todos os clientes (`Math.max(ownedLocal, ownedRemoto)`).
-3. **Tecnologias:** Se qualquer nó desbloqueou uma habilidade na árvore, ela permanece desbloqueada para sempre.
-4. **Cliques Pendentes:** Cliques enviados em lote são somados ao saldo usando o poder de clique autoritativo do servidor.
-
-### Proteção de Cota de Gravação no Cloudflare KV
-O plano gratuito do Cloudflare KV permite até 1.000 gravações (*writes*) por dia. Para não estourar a cota:
-- Grava **imediatamente** em: compras de oficinas, compras de habilidades, ordens de reset, confirmações de reset da ESP ou cliques ativos.
-- Em sincronizações ociosas (sem compras ou cliques), os dados ficam em cache de memória do Worker e só são gravados no KV em intervalos de **60 segundos** (checkpoint periódico).
+### Ações Suportadas (`POST`):
+- `action: "create_user"`: Cria instantaneamente um perfil no KV (`users:list` e `user:<id>:state`).
+- `action: "save_user_state"`: Salva o progresso compactado do jogador no KV.
+- `action: "sync"`: Utilizado pela ESP8266 para enviar telemetria, receber o estado global e dados do `topPlayer`.
+- `action: "reset"`: Dispara handshake de limpeza global.
 
 ---
 

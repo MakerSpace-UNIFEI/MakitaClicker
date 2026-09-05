@@ -5,6 +5,7 @@
 // =====================================================================
 
 const KV_KEY = 'gamestate';
+const USERS_LIST_KEY = 'users:list';
 const MAX_OWNED = 100;
 
 // Configuração das 24 oficinas (idêntico ao ESP e Web)
@@ -68,6 +69,8 @@ const CORS_HEADERS = {
 
 // Fallback em memória caso o binding MAKITA_KV ainda não esteja vinculado
 let memoryFallbackState = null;
+let memoryFallbackUsers = [];
+let memoryFallbackUserStates = {};
 
 function getDefaultState() {
   const owned = {};
@@ -155,6 +158,105 @@ function getTotalOwned(owned) {
   return total;
 }
 
+// =====================================================================
+// SERIALIZAÇÃO COMPACTA INDEXADA (ECONOMIA DE KV & REDE)
+// =====================================================================
+
+function getUserStateKey(userId) {
+  return `user:${userId}:state`;
+}
+
+// Converte estado operacional para representação compacta no KV
+function compactUserState(state) {
+  const upgradesArr = UPGRADES.map(u => {
+    if (state.owned && typeof state.owned[u.id] === 'number') {
+      return state.owned[u.id];
+    }
+    return 0;
+  });
+
+  const permsArr = [];
+  PERMANENT_UPGRADES.forEach((p, idx) => {
+    if (state.perms && state.perms[p.id] === true) {
+      permsArr.push(idx);
+    }
+  });
+
+  return {
+    makitas: typeof state.makitas === 'number' ? state.makitas : 0,
+    totalMakitasMade: typeof state.totalMakitasMade === 'number' ? state.totalMakitasMade : (state.makitas || 0),
+    upgrades: upgradesArr,
+    perms: permsArr,
+    lastUpdate: state.lastUpdate || Date.now(),
+    lastSavedAt: Date.now()
+  };
+}
+
+// Expande estado compacto para o formato operacional completo
+function expandUserState(raw) {
+  if (!raw || typeof raw !== 'object') return getDefaultState();
+
+  const owned = {};
+  UPGRADES.forEach((u, idx) => {
+    if (Array.isArray(raw.upgrades)) {
+      owned[u.id] = Math.max(0, Math.min(MAX_OWNED, parseInt(raw.upgrades[idx] || 0, 10)));
+    } else if (raw.owned && typeof raw.owned === 'object') {
+      owned[u.id] = Math.max(0, Math.min(MAX_OWNED, parseInt(raw.owned[u.id] || 0, 10)));
+    } else {
+      owned[u.id] = 0;
+    }
+  });
+
+  const perms = {};
+  PERMANENT_UPGRADES.forEach((p, idx) => {
+    if (Array.isArray(raw.perms)) {
+      perms[p.id] = raw.perms.includes(idx);
+    } else if (raw.perms && typeof raw.perms === 'object') {
+      perms[p.id] = raw.perms[p.id] === true;
+    } else {
+      perms[p.id] = false;
+    }
+  });
+
+  const mps = calculateMps(owned, perms);
+  const clickPower = calculateClickPower(perms);
+  const totalOwned = getTotalOwned(owned);
+  const makitas = typeof raw.makitas === 'number' ? raw.makitas : 0;
+  const totalMakitasMade = typeof raw.totalMakitasMade === 'number' ? raw.totalMakitasMade : makitas;
+
+  return {
+    makitas,
+    mps,
+    clickPower,
+    totalOwned,
+    totalMakitasMade,
+    owned,
+    perms,
+    lastUpdate: raw.lastUpdate || Date.now(),
+    lastSavedAt: raw.lastSavedAt || Date.now()
+  };
+}
+
+// Identifica o jogador com o maior progresso para telemetria no LCD da ESP8266
+function getTopPlayer(usersList) {
+  if (!Array.isArray(usersList) || usersList.length === 0) {
+    return { name: 'MakerSpace', makitas: 0, totalMakitasMade: 0 };
+  }
+  let top = usersList[0];
+  for (const u of usersList) {
+    const currentScore = typeof u.totalMakitasMade === 'number' ? u.totalMakitasMade : (u.makitas || 0);
+    const topScore = typeof top.totalMakitasMade === 'number' ? top.totalMakitasMade : (top.makitas || 0);
+    if (currentScore > topScore) {
+      top = u;
+    }
+  }
+  return {
+    name: top.name || 'Maker',
+    makitas: top.makitas || 0,
+    totalMakitasMade: top.totalMakitasMade || top.makitas || 0
+  };
+}
+
 function getKV(env) {
   if (!env) {
     return { kv: null, name: null, diag: 'Objeto context.env não fornecido pelo Cloudflare Pages.' };
@@ -209,6 +311,63 @@ function advancePassiveProduction(state, now) {
   state.totalOwned = getTotalOwned(state.owned);
 }
 
+async function loadUsersList(env) {
+  const { kv } = getKV(env);
+  if (kv) {
+    try {
+      const data = await kv.get(USERS_LIST_KEY, { type: 'json' });
+      if (Array.isArray(data)) return data;
+    } catch (err) {
+      console.error('[KV] Erro ao ler lista de usuários:', err);
+    }
+  }
+  return memoryFallbackUsers;
+}
+
+async function saveUsersList(env, list) {
+  const { kv } = getKV(env);
+  if (kv) {
+    try {
+      await kv.put(USERS_LIST_KEY, JSON.stringify(list));
+    } catch (err) {
+      console.error('[KV] Erro ao salvar lista de usuários:', err);
+    }
+  }
+  memoryFallbackUsers = list;
+}
+
+async function loadUserState(env, userId) {
+  const { kv, name, kvConnected, diag } = getKV(env);
+  const key = getUserStateKey(userId);
+  if (kv) {
+    try {
+      const raw = await kv.get(key, { type: 'json' });
+      if (raw && typeof raw === 'object') {
+        const state = expandUserState(raw);
+        return { state, kvName: name, kvConnected: true, kvDiag: diag };
+      }
+    } catch (err) {
+      console.error(`[KV] Erro ao ler estado do usuário ${userId}:`, err);
+    }
+  }
+  const fallback = memoryFallbackUserStates[userId] || getDefaultState();
+  return { state: fallback, kvName: name, kvConnected: !!kv, kvDiag: diag };
+}
+
+async function saveUserState(env, userId, state) {
+  const { kv } = getKV(env);
+  const key = getUserStateKey(userId);
+  const compact = compactUserState(state);
+  if (kv) {
+    try {
+      await kv.put(key, JSON.stringify(compact));
+    } catch (err) {
+      console.error(`[KV] Erro ao salvar estado do usuário ${userId}:`, err);
+    }
+  }
+  memoryFallbackUserStates[userId] = state;
+}
+
 async function loadState(env) {
   const { kv, name, diag } = getKV(env);
   if (kv) {
@@ -246,21 +405,59 @@ export async function onRequestOptions() {
 }
 
 export async function onRequestGet(context) {
-  const { env } = context;
-  const { state, kvName, kvConnected, kvDiag } = await loadState(env);
-  const now = Date.now();
+  const { request, env } = context;
+  const url = new URL(request.url);
+  const action = url.searchParams.get('action');
+  const userId = url.searchParams.get('userId');
 
+  const { kvName, kvConnected, diag } = getKV(env);
+  const usersList = await loadUsersList(env);
+  const topPlayer = getTopPlayer(usersList);
+
+  // 1. Rota de Listagem de Perfis
+  if (action === 'list_users') {
+    return new Response(JSON.stringify({
+      users: usersList,
+      topPlayer,
+      _kv_connected: kvConnected,
+      _kv_binding: kvName || 'NONE',
+      _kv_diag: diag
+    }), {
+      status: 200,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // 2. Rota de Estado Individual de Perfil
+  if (userId) {
+    const { state } = await loadUserState(env, userId);
+    const now = Date.now();
+    advancePassiveProduction(state, now);
+
+    return new Response(JSON.stringify({
+      ...state,
+      topPlayer,
+      _kv_connected: kvConnected,
+      _kv_binding: kvName || 'NONE',
+      _kv_diag: diag
+    }), {
+      status: 200,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // 3. Rota Padrão / Estado Global (ESP8266 & Legado)
+  const { state } = await loadState(env);
+  const now = Date.now();
   advancePassiveProduction(state, now);
-  // NOTA: GET calcula a produção passiva em tempo real sem chamar saveState(),
-  // economizando a cota gratuita de 1.000 escritas/dia do Cloudflare KV
-  // e aproveitando a cota de 100.000 leituras/dia!
 
   return new Response(JSON.stringify({
     ...state,
+    topPlayer,
     resetOrder: state.resetPendingEsp === true,
     _kv_connected: kvConnected,
     _kv_binding: kvName || 'NONE',
-    _kv_diag: kvDiag
+    _kv_diag: diag
   }), {
     status: 200,
     headers: CORS_HEADERS
@@ -276,13 +473,112 @@ export async function onRequestPost(context) {
     // Body vazio ou malformado
   }
 
-  const { state, kvName, kvConnected, kvDiag } = await loadState(env);
+  const url = new URL(request.url);
+  const action = body.action || url.searchParams.get('action') || (body.clicks ? 'sync' : '');
+  const isEsp = body.source === 'esp';
+  const { kvName, kvConnected, diag } = getKV(env);
+
+  const usersList = await loadUsersList(env);
+  let topPlayer = getTopPlayer(usersList);
+
+  // -------------------------------------------------------------
+  // AÇÃO 1: CRIAR NOVO PERFIL DE USUÁRIO (Salvo imediatamente no KV)
+  // -------------------------------------------------------------
+  if (action === 'create_user') {
+    const rawName = String(body.name || '').trim().replace(/[\r\n\t]/g, '');
+    const name = rawName.slice(0, 25) || 'Maker ' + Math.floor(Math.random() * 1000);
+    const now = Date.now();
+    const userId = 'u_' + now.toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+
+    const initialState = getDefaultState();
+    await saveUserState(env, userId, initialState);
+
+    const newUserEntry = {
+      id: userId,
+      name,
+      createdAt: now,
+      lastSavedAt: now,
+      makitas: 0,
+      totalMakitasMade: 0
+    };
+
+    usersList.push(newUserEntry);
+    await saveUsersList(env, usersList);
+    topPlayer = getTopPlayer(usersList);
+
+    return new Response(JSON.stringify({
+      success: true,
+      user: newUserEntry,
+      state: initialState,
+      topPlayer,
+      _kv_connected: kvConnected,
+      _kv_binding: kvName || 'NONE',
+      _kv_diag: diag
+    }), {
+      status: 200,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // -------------------------------------------------------------
+  // AÇÃO 2: SALVAR ESTADO DO PERFIL (Save Manual ou Auto-Save)
+  // -------------------------------------------------------------
+  if (action === 'save_user_state') {
+    const userId = body.userId;
+    if (!userId) {
+      return new Response(JSON.stringify({ error: 'userId obrigatório' }), {
+        status: 400,
+        headers: CORS_HEADERS
+      });
+    }
+
+    const now = Date.now();
+    const statePayload = body.state || body;
+    const expanded = expandUserState(statePayload);
+
+    if (typeof statePayload.makitas === 'number') {
+      expanded.makitas = statePayload.makitas;
+    }
+    if (typeof statePayload.totalMakitasMade === 'number') {
+      expanded.totalMakitasMade = statePayload.totalMakitasMade;
+    }
+    expanded.lastSavedAt = now;
+    expanded.lastUpdate = now;
+
+    await saveUserState(env, userId, expanded);
+
+    // Atualiza resumo no users:list para ranking rápido
+    const userIndex = usersList.findIndex(u => u.id === userId);
+    if (userIndex >= 0) {
+      usersList[userIndex].lastSavedAt = now;
+      usersList[userIndex].makitas = expanded.makitas;
+      usersList[userIndex].totalMakitasMade = expanded.totalMakitasMade;
+      await saveUsersList(env, usersList);
+    }
+    topPlayer = getTopPlayer(usersList);
+
+    return new Response(JSON.stringify({
+      success: true,
+      lastSavedAt: now,
+      state: expanded,
+      topPlayer,
+      _kv_connected: kvConnected,
+      _kv_binding: kvName || 'NONE',
+      _kv_diag: diag
+    }), {
+      status: 200,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // -------------------------------------------------------------
+  // AÇÃO 3: FLUXO GLOBAL / HARDWARE ESP8266 & RESET
+  // -------------------------------------------------------------
+  const { state } = await loadState(env);
   const now = Date.now();
   const previousMakitas = state.makitas || 0;
   advancePassiveProduction(state, now);
 
-  const action = body.action || (body.clicks ? 'sync' : '');
-  const isEsp = body.source === 'esp';
   const clientMakitas = typeof body.makitas === 'number' ? body.makitas : null;
   const clientTotal = typeof body.totalMakitasMade === 'number' ? body.totalMakitasMade : null;
   const clicks = Math.max(0, Math.min(parseInt(body.clicks || body.count || 0, 10), 5000));
@@ -297,11 +593,12 @@ export async function onRequestPost(context) {
     await saveState(env, newState);
     return new Response(JSON.stringify({
       ...newState,
+      topPlayer,
       isReset: true,
       resetOrder: true,
       _kv_connected: kvConnected,
       _kv_binding: kvName || 'NONE',
-      _kv_diag: kvDiag
+      _kv_diag: diag
     }), {
       status: 200,
       headers: CORS_HEADERS
@@ -452,10 +749,11 @@ export async function onRequestPost(context) {
 
   return new Response(JSON.stringify({
     ...state,
+    topPlayer,
     resetOrder: state.resetPendingEsp === true,
     _kv_connected: kvConnected,
     _kv_binding: kvName || 'NONE',
-    _kv_diag: kvDiag
+    _kv_diag: diag
   }), {
     status: 200,
     headers: CORS_HEADERS

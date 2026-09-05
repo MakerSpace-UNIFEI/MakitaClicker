@@ -68,13 +68,14 @@ Linha 3:        .pages.dev
 ### 4. Linhas 2 e 3 (Modos Normais de Jogo)
 Quando não está exibindo o site, a tela opera com:
 - **Linha 2:** Poder de corte por clique e produção passiva por segundo (`⚡+1.0 | 🏭 5.0/s`).
-- **Linha 3:** Rotação de informações a cada 3,2 segundos entre 6 telas:
+- **Linha 3:** Rotação de informações a cada 3,2 segundos entre 7 telas:
   1. Endereço do Site (usando linhas 2 e 3)
-  2. Progresso da Meta (`Meta 99B: XX.XX%`)
-  3. Total de Oficinas (`Oficinas: XX un.`)
-  4. Versão do Firmware (`FW: vXX (OTA Ativo)`)
-  5. IP Local na Rede Wi-Fi (`IP: 192.168.x.x`)
-  6. Créditos (` MakerSpace UNIFEI  `)
+  2. **Top Player:** Jogador líder global do site (`Top: Nome (Saldo)`)
+  3. Progresso da Meta (`Meta 99B: XX.XX%`)
+  4. Total de Oficinas (`Oficinas: XX un.`)
+  5. Versão do Firmware (`FW: vXX (OTA Ativo)`)
+  6. IP Local na Rede Wi-Fi (`IP: 192.168.x.x`)
+  7. Créditos (` MakerSpace UNIFEI  `)
 - **Feedback de Clique:** Se o jogador pressiona o botão, a Linha 3 exibe instantaneamente `>> CORTE EFETUADO! <<` por 600ms.
 
 ---
@@ -106,7 +107,17 @@ A cada 5 segundos (`syncWithCloud`), a ESP8266 envia um pacote JSON via HTTPS pa
 }
 ```
 
-A nuvem responde com o estado mestre atualizado e quaisquer ordens pendentes.
+A nuvem responde com o estado mestre atualizado, quaisquer ordens pendentes e os dados do **Top Player** da web:
+```json
+{
+  "makitas": 25000.0,
+  "topPlayer": {
+    "name": "Carlos Maker",
+    "makitas": 450000.0
+  }
+}
+```
+A ESP8266 armazena esses dados em RAM e os exibe periodicamente na Linha 3 do LCD 20×4!
 
 ---
 

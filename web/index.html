@@ -30,6 +30,18 @@
 
     <!-- ===== Centro: Navegação + Abas + Log ===== -->
     <section class="col-center">
+        <!-- Barra de Perfil e Salve Manual -->
+        <div class="profile-bar">
+            <div class="profile-info">
+                <span class="profile-badge">👤 <strong id="currentProfileName">Carregando...</strong></span>
+                <button class="profile-btn-switch" id="btnSwitchProfile" title="Trocar ou criar perfil">Trocar Perfil</button>
+            </div>
+            <div class="profile-actions">
+                <span class="save-indicator" id="saveStatusText">🟢 Sincronizado</span>
+                <button class="btn-save-cloud" id="btnSaveCloud" title="Salvar progresso no Cloudflare KV">💾 Salvar na Nuvem</button>
+            </div>
+        </div>
+
         <div class="center-nav">
             <button class="navbtn is-active" id="tabBtnPerm" data-tab="tab-perm">Melhorias Permanentes</button>
             <button class="navbtn" id="tabBtnStats" data-tab="tab-stats">Estatísticas</button>
@@ -187,6 +199,31 @@
         <div class="shop-list" id="shopList"></div>
     </section>
 
+</div>
+
+<!-- Modal de Seleção e Criação de Perfil -->
+<div class="modal-overlay" id="profileModal" style="display: none;">
+    <div class="modal-dialog">
+        <div class="modal-header">
+            <h2 class="modal-title">🔧 Escolha seu Perfil Maker</h2>
+            <p class="modal-subtitle">Seu saldo, oficinas e árvores de habilidades ficam salvos individualmente no Cloudflare KV.</p>
+        </div>
+
+        <div class="modal-section">
+            <h3 class="modal-section-title">Perfis Existentes</h3>
+            <div class="profile-list" id="profileListContainer">
+                <div class="profile-list-empty">Carregando perfis da nuvem...</div>
+            </div>
+        </div>
+
+        <div class="modal-section">
+            <h3 class="modal-section-title">Ou Crie um Novo Perfil</h3>
+            <form id="newProfileForm" class="profile-form">
+                <input type="text" id="newProfileInput" class="profile-input" placeholder="Seu nome ou apelido (ex: Victor, Nicolae...)" maxlength="25" autocomplete="off" required>
+                <button type="submit" class="profile-btn-create" id="btnCreateProfile">Criar Perfil e Jogar 🚀</button>
+            </form>
+        </div>
+    </div>
 </div>
 
 <script type="module" src="/game.js"></script>

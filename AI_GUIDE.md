@@ -14,17 +14,28 @@ O projeto é um jogo incremental (Cookie Clicker) **híbrido** (Físico + Web).
 
 ### Frontend (Vanilla JS)
 - **Não adicione frameworks** (como React ou Vue). O frontend é 100% Vanilla JS focado em performance.
-- **Motor Gráfico:** O arquivo `game.js` roda o ciclo principal (cálculo passivo de saldo e redraws rápidos) a **60 FPS** usando `requestAnimationFrame`. 
-- **DOM Throttling:** Atualizações no DOM que não exigem 60 FPS (como atualizar listas de oficinas, textos descritivos) devem ser feitas via throttling (~6 FPS) para manter o uso de CPU mínimo.
+- **Motor Gráfico:** O arquivo `game.js` roda o ciclo principal usando `requestAnimationFrame` na taxa de atualização nativa do monitor do usuário (sem bloqueio arbitrário a 60 FPS), calculando a produção passiva através do delta de tempo (`dt`).
+- **DOM Throttling:** Atualizações no DOM que não exigem taxa máxima (como atualizar listas de oficinas, textos descritivos) devem ser feitas via throttling (~6 FPS) para manter o uso de CPU mínimo.
+- **Sistema de Perfis de Usuário:** O jogo é individual por perfil (sem senha, focado em facilidade). O progresso local fica em `localStorage` sob a chave `makita_clicker_state_<userId>` e sincroniza na nuvem com Cloudflare KV a cada 3 minutos (auto-save) ou via botão manual ("Salvar na Nuvem").
+- **Proteção contra Perda de Progresso:** Um listener `beforeunload` avisa o jogador caso ele tente fechar o navegador com progresso local não salvo há mais de 5 minutos.
 
-### Backend (Reconciliação e CRDT)
-- **Sincronismo Assíncrono:** O Frontend e a ESP enviam dados via POST para `/api/state`. Como há duas fontes de verdade gerando cliques ao mesmo tempo, usamos **Monotonic Ratchet (CRDT)**.
-- **Regra de Ouro:** O saldo nunca retrocede por atualizações, ele sempre soma os deltas pendentes. O nível de uma melhoria é sempre o `Math.max` entre o servidor e o cliente. Se for retirar saldo (compra de item), essa operação deve ser atômica e autorizada.
-- O Cloudflare KV tem limite de gravações gratuitas. O backend faz cache em memória no Worker e salva o estado apenas em *checkpoints* (a cada 60s) ou imediatamente se houver uma compra.
+### Backend (Reconciliação, Perfis e Compactação no KV)
+- **Sincronismo Assíncrono:** O Frontend e a ESP enviam dados via POST para `/api/state`. 
+- **Chaves no Cloudflare KV:**
+  - `users:list`: Lista com metadados de todos os perfis cadastrados (`id`, `name`, `createdAt`, `lastSeen`, `makitas`).
+  - `user:<userId>:state`: Estado individual de jogo do usuário.
+  - `gamestate`: Estado global mantido para compatibilidade e sincronização da ESP8266 física.
+- **Serialização Compacta:** Para otimizar armazenamento e cota de rede no KV, os upgrades e melhorias permanentes são compactados em vetores indexados:
+  - `upgrades`: Array denso de 24 inteiros `[q0, q1, ..., q23]`.
+  - `perms`: Array esparso contendo os índices numéricos das habilidades desbloqueadas `[0, 1, 4]`.
+- **Top Player / Leaderboard:** O backend calcula automaticamente o jogador com maior saldo de Makitas (`topPlayer: { name, makitas }`) e o injeta nas respostas para o frontend e para o firmware da ESP8266.
+- **Regra de Ouro (CRDT Ratchet):** O saldo nunca retrocede por atualizações, ele sempre soma os deltas pendentes. O nível de uma melhoria é sempre o `Math.max` entre o servidor e o cliente. Se for retirar saldo (compra de item), essa operação deve ser atômica e autorizada.
+- O Cloudflare KV tem limite de gravações gratuitas (1.000 writes/dia). O backend utiliza cache e o frontend controla a periodicidade de salvamento do estado do usuário.
 
 ### Firmware (C++ ESP8266)
 - **Sem bloqueios:** É proibido usar `delay()` no loop principal. Toda temporização deve ser não-bloqueante usando `millis()` ou `yield()`.
 - **Display LCD (I2C):** O LCD (20x4) usa "double-buffering". Só envie comandos via I2C (`printLinhaFormatada`) para caracteres/linhas que de fato mudaram. Isso evita cintilação (flicker).
+- **Top Player na Tela:** Na rotação de telas informativas da Linha 3 do LCD, o firmware exibe o jogador líder global do site: `Top: <nome> (<saldo>)`.
 - **LittleFS:** O estado é persistido em `/gamestate.json`. Nunca bloqueie o loop principal com gravações longas desnecessárias. Apenas a cada 15 segundos.
 
 ## 🛠️ 3. Como Adicionar Funcionalidades (Playbook)

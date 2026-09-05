@@ -13,9 +13,9 @@
 O **MakitaClicker** é um jogo incremental (*cookie clicker*) híbrido físico-digital. O objetivo do jogo é acumular "Makitas" até atingir a grande meta cósmica de **99 Bilhões (99B)**. 
 
 O diferencial do projeto é sua integração completa entre hardware e web:
-1. **Console Físico Autônomo:** Um microcontrolador **ESP8266 NodeMCU** com botão mecânico industrial de alta durabilidade e um display **LCD 20×4 I2C**. Funciona com latência de clique de 0ms, salva o progresso na memória flash interna (**LittleFS**) e sincroniza pela internet via Wi-Fi.
-2. **Interface Web Moderna:** Roda em qualquer navegador (desktop ou mobile) a **60 FPS** com persistência em `localStorage`, loja de oficinas, árvore tecnológica de habilidades permanentes (*Skill Tree*) e aba exclusiva de telemetria em tempo real do hardware.
-3. **Backend Serverless (Cloudflare Pages & KV):** Reconciliação contínua e tolerante a falhas (CRDT Ratchet Monotônico), garantindo que cliques físicos e virtuais somem ao mesmo saldo global sem perdas de progresso.
+1. **Console Físico Autônomo:** Um microcontrolador **ESP8266 NodeMCU** com botão mecânico industrial de alta durabilidade e um display **LCD 20×4 I2C**. Funciona com latência de clique de 0ms, salva o progresso na memória flash interna (**LittleFS**), sincroniza pela internet via Wi-Fi e exibe em tempo real o **Top Player** (jogador líder global) no display.
+2. **Interface Web Moderna & Sistema de Perfis:** Roda em qualquer navegador (desktop ou mobile) na taxa de atualização nativa do monitor com cálculo via `dt`, perfis de usuário individuais instantâneos (sem senha), persistência local por perfil, auto-save a cada 3 minutos, botão manual de salvamento na nuvem, loja de oficinas, árvore tecnológica (*Skill Tree*) e telemetria de hardware.
+3. **Backend Serverless (Cloudflare Pages & KV):** Banco de dados em Cloudflare KV com serialização compacta (arrays indexados para oficinas e habilidades), listagem de usuários (`users:list`), estado individual (`user:<id>:state`) e cálculo de liderança para o display do console físico.
 4. **CI/CD e Firmware OTA Automático:** A cada `git push` no repositório GitHub, a Cloudflare compila a aplicação web e também compila o código C++ do ESP8266 via `arduino-cli`. A ESP baixa a nova versão de firmware pelo ar (Over-The-Air) automaticamente, sem necessidade de cabos.
 
 ---
@@ -35,9 +35,10 @@ O diferencial do projeto é sua integração completa entre hardware e web:
     │     Navegador        │    │ Cloudflare Functions │    │  ESP8266 NodeMCU     │
     │  (Desktop / Mobile)  │◀──▶│   + Cloudflare KV    │◀──▶│  (Hardware Físico)   │
     │                      │    │   (Banco de Dados)   │    │                      │
-    │ - Motor 60 FPS       │    └──────────────────────┘    │ - Display LCD 20x4   │
-    │ - Loja de Oficinas   │                                │ - Botão Físico (D5)  │
-    │ - Árvore Tecnológica │                                │ - Flash LittleFS     │
+    │ - Taxa Nativa (dt)   │    │ - users:list         │    │ - Display LCD 20x4   │
+    │ - Perfis de Usuário  │    │ - user:<id>:state    │    │ - Top Player no LCD  │
+    │ - Loja de Oficinas   │    │ - gamestate (global) │    │ - Botão Físico (D5)  │
+    │ - Árvore Tecnológica │    └──────────────────────┘    │ - Flash LittleFS     │
     │ - Aba Status & HW    │                                │ - Auto-Update OTA    │
     └──────────────────────┘                                └──────────────────────┘
 ```
@@ -79,17 +80,22 @@ MakitaClicker/
 
 O frontend foi desenvolvido com foco em alta performance, responsividade e desacoplamento modular completo:
 
-1. **Ciclo Gráfico a 60 FPS (`gameLoop`):**
-   - Executa via `requestAnimationFrame`.
+1. **Ciclo Gráfico Fluido (`gameLoop`):**
+   - Executa via `requestAnimationFrame` na taxa nativa de atualização da tela do jogador (sem limitação artificial a 60 FPS).
    - Calcula a produção passiva contínua pelo delta de tempo (`dt`), somando frações precisas de Makitas a cada quadro.
-   - Atualiza o contador de saldo e a taxa de MPS a 60 FPS para máxima fluidez visual.
-2. **Renderização Otimizada com Throttling (6 FPS):**
+   - Atualiza o contador de saldo e a taxa de MPS continuamente para máxima fluidez visual.
+2. **Sistema de Perfis & Salvamento na Nuvem:**
+   - **Criação de Perfil Instantânea:** Ao entrar no site, o usuário seleciona um perfil existente ou digita um nome para criar um novo perfil (salvo instantaneamente no KV da Cloudflare).
+   - **Salvamento Automático & Manual:** O progresso local é salvo no Cloudflare KV a cada 3 minutos, ou instantaneamente pelo botão **"💾 Salvar na Nuvem"**.
+   - **Alerta de Saída (`beforeunload`):** Se houver progresso acumulado localmente há mais de 5 minutos sem salvamento na nuvem, o navegador exibe um popup de confirmação antes de fechar a aba.
+   - **Barra de Perfil:** Exibe o nome do perfil ativo, botão para alternar de jogador e indicador visual com horário do último salvamento na nuvem.
+3. **Renderização Otimizada com Throttling (6 FPS):**
    - Listas de compras, botões de oficinas e status de requisitos da árvore tecnológica são atualizados a ~6 FPS (ou imediatamente quando o estado fica *dirty*). Isso evita gargalos de repintura do DOM, mantendo o consumo de CPU abaixo de 1%.
-3. **Abas de Navegação:**
+4. **Abas de Navegação:**
    - **🌳 Melhorias Permanentes:** Árvore tecnológica (*Skill Tree*) com pré-requisitos visuais conectando nós pai e filho, multiplicadores globais aditivos e bônus de clique.
    - **📊 Estatísticas:** Total histórico produzido, oficinas ativas, multiplicadores e botão de **Reset Total**.
    - **📡 Status & Hardware:** Monitoramento ao vivo do microcontrolador físico (veja abaixo).
-4. **Aba "📡 Status & Hardware":**
+5. **Aba "📡 Status & Hardware":**
    - **LED Pulsante:** Verde para ESP online (contato há menos de 90s), laranja se sem sinal recente, cinza se desconectada.
    - **Ping / Latência:** Medição em tempo real da conexão HTTP entre o navegador e os servidores da Cloudflare.
    - **Comparativo de Firmware:** Versão remota (`version.json`) vs. versão instalada no chip físico.
@@ -110,16 +116,17 @@ A placa **ESP8266 NodeMCU** é 100% autônoma e opera sem necessidade de qualque
    - **Linha 0:** Título do jogo com animação do disco de serra giratório (alternando frames na memória CGRAM) e faíscas dinâmicas a cada clique.
    - **Linha 1:** Ícone de moeda/troféu e Saldo formatado em notação compacta (`k`, `M`, `B`, `T`, `Qa`).
    - **Linhas 2 e 3 (Exibição sem cortes do Site):** Como o domínio `makitaclicker.pages.dev` possui 23 caracteres, o firmware utiliza as Linhas 2 e 3 em conjunto (`Site: makitaclicker` e `      .pages.dev`), eliminando qualquer corte de texto.
-   - **Telas Rotativas:** A cada 3,2 segundos, a Linha 3 alterna entre:
+   - **Telas Rotativas:** A cada 3,2 segundos, a Linha 3 alterna entre 7 telas:
      1. Endereço completo do Site
-     2. Progresso da Meta 99B (`Meta 99B: XX.XX%`)
-     3. Total de Oficinas construídas
-     4. Versão de Firmware (`FW: vXX (OTA Ativo)`)
-     5. Endereço IP Local (`IP: 192.168.x.x`)
-     6. MakerSpace UNIFEI
+     2. **Top Player Global:** Exibe o jogador líder do site (`Top: <nome> (<saldo>)`) recebido via nuvem
+     3. Progresso da Meta 99B (`Meta 99B: XX.XX%`)
+     4. Total de Oficinas construídas
+     5. Versão de Firmware (`FW: vXX (OTA Ativo)`)
+     6. Endereço IP Local (`IP: 192.168.x.x`)
+     7. MakerSpace UNIFEI
    - **Double-Buffering:** Só retransmite para o barramento I2C caracteres de linhas que realmente mudaram, eliminando qualquer cintilação (*flicker*).
 4. **Persistência na Memória Flash (LittleFS):** O estado é salvo no arquivo `/gamestate.json` a cada 15 segundos ou antes de reiniciar. Se faltar energia, o saldo não se perde.
-5. **Telemetria Contínua:** A cada 5 segundos, a ESP envia à nuvem seu endereço IP, versão de firmware instalada, RSSI de Wi-Fi, Uptime e RAM livre.
+5. **Telemetria Contínua:** A cada 5 segundos, a ESP envia à nuvem seu endereço IP, versão de firmware instalada, RSSI de Wi-Fi, Uptime e RAM livre, e recebe os dados globais do líder da partida (`topPlayer`).
 
 ---
 

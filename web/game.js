@@ -1,11 +1,17 @@
 // =====================================================================
-// MAKITA CLICKER - MOTOR DE JOGO (CLIENTE 60 FPS) + SYNC COM NUVEM
-// Sincronização Inteligente (Cloud Master / Local Slave) + LocalStorage
+// MAKITA CLICKER - MOTOR DE JOGO (RENDERIZAÇÃO NATIVA) + SYNC COM NUVEM
+// Sistema de Perfis de Usuário + Cloudflare KV + LocalStorage
 // =====================================================================
 
 let isLocalMode = false;
 let pendingClicks = 0;
 let serverClickPower = 1.0;
+
+// ---------- PERFIL ATIVO & CONTROLE DE SALVAMENTO ----------
+let currentUserId = null;
+let currentUserName = null;
+let lastCloudSaveTime = Date.now();
+let hasUnsavedChanges = false;
 
 // ---------- estado ----------
 let makitas = 0;
@@ -17,10 +23,10 @@ const MAX_OWNED = 100;
 let totalMakitasMade = 0;
 let prevMakitas = 0;
 
-// Controle de Renderização Otimizada (desacoplada do tick de 60 FPS)
+// Controle de Renderização Otimizada
 let isDirty = true;
 let lastThrottledRender = 0;
-const THROTTLE_RENDER_MS = 150; // Atualiza estados de botões/árvore a ~6 FPS
+const THROTTLE_RENDER_MS = 150; // Atualiza estados de botões/árvore com cadência suave
 
 // ---------- 24 UPGRADES DA LOJA (PROGRESSÃO ATÉ 99B+) ----------
 const upgrades = [
@@ -294,21 +300,63 @@ tabBtns.forEach(btn => {
     });
 });
 
-// ---------- PERSISTÊNCIA LOCAL (LOCALSTORAGE) ----------
-const LOCAL_STORAGE_KEY = 'makitaclicker_save';
+// ---------- PERSISTÊNCIA LOCAL (LOCALSTORAGE POR PERFIL) ----------
+function getLocalStorageKey() {
+    return currentUserId ? `makitaclicker_save_${currentUserId}` : 'makitaclicker_save';
+}
+
+function getCompactGameState() {
+    const upgradesArr = upgrades.map(u => owned[u.id] || 0);
+    const permsArr = [];
+    permanentUpgrades.forEach((p, idx) => {
+        if (p.purchased) permsArr.push(idx);
+    });
+    return {
+        makitas,
+        totalMakitasMade,
+        upgrades: upgradesArr,
+        perms: permsArr,
+        lastUpdate: Date.now()
+    };
+}
+
+function applyCompactState(data) {
+    if (!data) return;
+    if (typeof data.makitas === 'number') {
+        makitas = data.makitas;
+    }
+    if (typeof data.totalMakitasMade === 'number') {
+        totalMakitasMade = data.totalMakitasMade;
+    }
+    if (Array.isArray(data.upgrades)) {
+        upgrades.forEach((u, idx) => {
+            owned[u.id] = data.upgrades[idx] || 0;
+        });
+    } else if (data.owned && typeof data.owned === 'object') {
+        upgrades.forEach(u => {
+            owned[u.id] = data.owned[u.id] || 0;
+        });
+    }
+    if (Array.isArray(data.perms)) {
+        permanentUpgrades.forEach((p, idx) => {
+            p.purchased = data.perms.includes(idx);
+        });
+    } else if (data.perms && typeof data.perms === 'object') {
+        permanentUpgrades.forEach(p => {
+            p.purchased = data.perms[p.id] === true;
+        });
+    }
+    mps = calculateLocalMps();
+    serverClickPower = calculateLocalClickPower();
+    isDirty = true;
+    renderUI();
+}
 
 function saveLocalState() {
     try {
-        const permsState = {};
-        permanentUpgrades.forEach(p => { permsState[p.id] = p.purchased; });
-        const saveObj = {
-            makitas,
-            totalMakitasMade,
-            owned,
-            perms: permsState,
-            timestamp: Date.now()
-        };
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(saveObj));
+        const saveObj = getCompactGameState();
+        saveObj.name = currentUserName;
+        localStorage.setItem(getLocalStorageKey(), JSON.stringify(saveObj));
     } catch (e) {
         // LocalStorage desabilitado ou cheio
     }
@@ -316,25 +364,10 @@ function saveLocalState() {
 
 function loadLocalState() {
     try {
-        const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
+        const raw = localStorage.getItem(getLocalStorageKey());
         if (!raw) return false;
         const data = JSON.parse(raw);
-        if (typeof data.makitas === 'number') makitas = data.makitas;
-        if (typeof data.totalMakitasMade === 'number') totalMakitasMade = data.totalMakitasMade;
-        if (data.owned && typeof data.owned === 'object') {
-            upgrades.forEach(u => {
-                if (typeof data.owned[u.id] === 'number') {
-                    owned[u.id] = data.owned[u.id];
-                }
-            });
-        }
-        if (data.perms && typeof data.perms === 'object') {
-            permanentUpgrades.forEach(p => {
-                if (data.perms[p.id] === true) {
-                    p.purchased = true;
-                }
-            });
-        }
+        applyCompactState(data);
         return true;
     } catch (e) {
         return false;
@@ -523,9 +556,10 @@ function buyUpgrade(upgrade) {
     owned[upgrade.id] = (owned[upgrade.id] || 0) + qty;
     mps = calculateLocalMps();
     isDirty = true;
+    hasUnsavedChanges = true;
 
-    syncWithCloud({ action: 'buy', upgradeId: upgrade.id, qty: buyQty });
     saveLocalState();
+    updateSaveIndicator();
 }
 
 function buyPermanentUpgrade(perm) {
@@ -541,9 +575,10 @@ function buyPermanentUpgrade(perm) {
     mps = calculateLocalMps();
     serverClickPower = calculateLocalClickPower();
     isDirty = true;
+    hasUnsavedChanges = true;
 
-    syncWithCloud({ action: 'perm_buy', permId: perm.id });
     saveLocalState();
+    updateSaveIndicator();
 }
 
 // ---------- RENDERIZAÇÃO INTELIGENTE E DESACOPLADA ----------
@@ -802,6 +837,7 @@ makitaBtn.addEventListener('click', () => {
     makitas += gain;
     totalMakitasMade += gain;
     pendingClicks++;
+    hasUnsavedChanges = true;
     isDirty = true;
     playClickFeedback(gain);
 });
@@ -809,7 +845,8 @@ makitaBtn.addEventListener('click', () => {
 // ---------- RESET TOTAL UNIFICADO ----------
 function resetAllProgress(sendToServer = true) {
     try {
-        localStorage.removeItem(LOCAL_STORAGE_KEY);
+        localStorage.removeItem(getLocalStorageKey());
+        localStorage.removeItem('makitaclicker_save');
         localStorage.removeItem('makita_perm_upgrades');
         localStorage.removeItem('makita_total_produced');
         localStorage.removeItem('makita_local_state');
@@ -824,8 +861,13 @@ function resetAllProgress(sendToServer = true) {
     permanentUpgrades.forEach(u => { u.purchased = false; });
     serverClickPower = 1.0;
     isDirty = true;
+    hasUnsavedChanges = true;
 
-    if (sendToServer) {
+    saveLocalState();
+
+    if (sendToServer && currentUserId) {
+        saveUserProgressToCloud(true);
+    } else if (sendToServer) {
         syncWithCloud({ action: 'reset' });
     }
 
@@ -1117,6 +1159,256 @@ function updateStatusUI() {
     }
 }
 
+// ---------- GERENCIAMENTO DE PERFIS DE USUÁRIO & SAVE NA NUVEM ----------
+const profileModalEl = document.getElementById('profileModal');
+const profileListContainerEl = document.getElementById('profileListContainer');
+const newProfileFormEl = document.getElementById('newProfileForm');
+const newProfileInputEl = document.getElementById('newProfileInput');
+const currentProfileNameEl = document.getElementById('currentProfileName');
+const btnSwitchProfileEl = document.getElementById('btnSwitchProfile');
+const btnSaveCloudEl = document.getElementById('btnSaveCloud');
+const saveStatusTextEl = document.getElementById('saveStatusText');
+
+function updateProfileUI() {
+    if (currentProfileNameEl) {
+        currentProfileNameEl.textContent = currentUserName || 'Sem Perfil';
+    }
+    updateSaveIndicator();
+}
+
+function updateSaveIndicator() {
+    if (!saveStatusTextEl) return;
+    if (!currentUserId) {
+        saveStatusTextEl.textContent = 'Sem Perfil';
+        saveStatusTextEl.style.color = 'var(--text-lo)';
+        return;
+    }
+
+    const elapsedMs = Date.now() - lastCloudSaveTime;
+    const elapsedSec = Math.round(elapsedMs / 1000);
+    const elapsedMin = Math.round(elapsedMs / 60000);
+
+    if (elapsedMs > 5 * 60 * 1000 && hasUnsavedChanges) {
+        saveStatusTextEl.textContent = `⚠️ Não salvo há ${elapsedMin} min`;
+        saveStatusTextEl.style.color = 'var(--orange)';
+    } else if (hasUnsavedChanges) {
+        saveStatusTextEl.textContent = `🟡 Alterações locais (${elapsedSec < 60 ? elapsedSec + 's' : elapsedMin + 'm'})`;
+        saveStatusTextEl.style.color = 'var(--orange)';
+    } else {
+        saveStatusTextEl.textContent = elapsedSec < 10 ? '🟢 Salvo agora' : `🟢 Salvo há ${elapsedSec < 60 ? elapsedSec + 's' : elapsedMin + 'm'}`;
+        saveStatusTextEl.style.color = 'var(--green)';
+    }
+}
+
+async function openProfileModal() {
+    if (!profileModalEl) return;
+    profileModalEl.style.display = 'flex';
+    if (profileListContainerEl) {
+        profileListContainerEl.innerHTML = '<div class="profile-list-empty">Carregando perfis da nuvem...</div>';
+    }
+
+    try {
+        const res = await fetch('/api/state?action=list_users');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        renderProfileList(data.users || []);
+    } catch (e) {
+        console.warn('Erro ao carregar lista de usuários:', e);
+        if (profileListContainerEl) {
+            profileListContainerEl.innerHTML = '<div class="profile-list-empty">Não foi possível carregar os perfis. Crie um novo abaixo!</div>';
+        }
+    }
+}
+
+function renderProfileList(users) {
+    if (!profileListContainerEl) return;
+    if (!users || users.length === 0) {
+        profileListContainerEl.innerHTML = '<div class="profile-list-empty">Nenhum perfil criado ainda. Seja o primeiro a criar!</div>';
+        return;
+    }
+
+    users.sort((a, b) => (b.totalMakitasMade || b.makitas || 0) - (a.totalMakitasMade || a.makitas || 0));
+
+    profileListContainerEl.innerHTML = '';
+    users.forEach((user, idx) => {
+        const item = document.createElement('div');
+        const isCurrent = user.id === currentUserId;
+        item.className = 'profile-item' + (isCurrent ? ' is-active-user' : '');
+        
+        const medal = idx === 0 ? '🥇' : (idx === 1 ? '🥈' : (idx === 2 ? '🥉' : '👤'));
+        const score = formatCompactNumber(user.totalMakitasMade || user.makitas || 0);
+
+        item.innerHTML = `
+            <div class="profile-item__left">
+                <span class="profile-item__icon">${medal}</span>
+                <div>
+                    <div class="profile-item__name">${user.name} ${isCurrent ? '<small style="color: var(--green); font-weight: normal;">(Atual)</small>' : ''}</div>
+                    <div class="profile-item__score">${score} Makitas acumuladas</div>
+                </div>
+            </div>
+            <button class="profile-item__btn">${isCurrent ? 'Continuar' : 'Jogar'}</button>
+        `;
+
+        item.addEventListener('click', () => {
+            selectProfile(user);
+        });
+
+        profileListContainerEl.appendChild(item);
+    });
+}
+
+function selectProfile(user) {
+    if (!user || !user.id) return;
+    currentUserId = user.id;
+    currentUserName = user.name;
+
+    try {
+        localStorage.setItem('makita_active_user_id', currentUserId);
+        localStorage.setItem('makita_active_user_name', currentUserName);
+    } catch (e) {}
+
+    updateProfileUI();
+    if (profileModalEl) profileModalEl.style.display = 'none';
+
+    // Primeiro carrega o save local desse perfil (se houver) para resposta imediata
+    const hadLocal = loadLocalState();
+    if (!hadLocal) {
+        makitas = 0;
+        mps = 0;
+        totalMakitasMade = 0;
+        prevMakitas = 0;
+        pendingClicks = 0;
+        upgrades.forEach(u => { owned[u.id] = 0; });
+        permanentUpgrades.forEach(u => { u.purchased = false; });
+        mps = calculateLocalMps();
+        serverClickPower = calculateLocalClickPower();
+        isDirty = true;
+        renderUI();
+    }
+
+    // Busca o save mais recente na nuvem
+    fetchUserProfileState(currentUserId);
+}
+
+async function fetchUserProfileState(userId) {
+    try {
+        const res = await fetch(`/api/state?userId=${encodeURIComponent(userId)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        applyCompactState(data);
+        saveLocalState();
+        lastCloudSaveTime = Date.now();
+        hasUnsavedChanges = false;
+        updateSaveIndicator();
+    } catch (e) {
+        console.warn('Erro ao carregar estado do perfil na nuvem:', e);
+    }
+}
+
+async function createNewProfile(name) {
+    const cleanName = String(name || '').trim();
+    if (!cleanName) return;
+
+    const btnCreate = document.getElementById('btnCreateProfile');
+    if (btnCreate) {
+        btnCreate.disabled = true;
+        btnCreate.textContent = 'Salvando no KV...';
+    }
+
+    try {
+        const res = await fetch('/api/state', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'create_user', name: cleanName })
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (data.success && data.user) {
+            selectProfile(data.user);
+        }
+    } catch (e) {
+        alert('Erro ao criar perfil na nuvem: ' + e.message);
+    } finally {
+        if (btnCreate) {
+            btnCreate.disabled = false;
+            btnCreate.textContent = 'Criar Perfil e Jogar 🚀';
+        }
+    }
+}
+
+async function saveUserProgressToCloud(isManual = false) {
+    if (!currentUserId) return;
+
+    if (isManual && btnSaveCloudEl) {
+        btnSaveCloudEl.disabled = true;
+        btnSaveCloudEl.textContent = '💾 Salvando...';
+    }
+    if (saveStatusTextEl) {
+        saveStatusTextEl.textContent = '🟡 Salvando na Nuvem...';
+        saveStatusTextEl.style.color = 'var(--orange)';
+    }
+
+    const payload = {
+        action: 'save_user_state',
+        userId: currentUserId,
+        state: getCompactGameState()
+    };
+
+    try {
+        const res = await fetch('/api/state', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        lastCloudSaveTime = Date.now();
+        hasUnsavedChanges = false;
+        if (saveStatusTextEl) {
+            saveStatusTextEl.textContent = '🟢 Salvo na Nuvem';
+            saveStatusTextEl.style.color = 'var(--green)';
+        }
+        if (isManual) {
+            showFloatPlus('💾 Salvo!');
+        }
+    } catch (e) {
+        console.warn('Falha ao salvar progresso na nuvem:', e);
+        if (saveStatusTextEl) {
+            saveStatusTextEl.textContent = '⚠️ Falha ao salvar (offline)';
+            saveStatusTextEl.style.color = 'var(--orange)';
+        }
+    } finally {
+        if (btnSaveCloudEl) {
+            btnSaveCloudEl.disabled = false;
+            btnSaveCloudEl.textContent = '💾 Salvar na Nuvem';
+        }
+    }
+}
+
+// Auto-Save periódico no KV a cada 3 minutos (180.000 ms)
+setInterval(() => {
+    if (currentUserId && hasUnsavedChanges) {
+        saveUserProgressToCloud(false);
+    }
+}, 180000);
+
+// Indicador visual de tempo decorrido do save atualizado a cada 2s
+setInterval(updateSaveIndicator, 2000);
+
+// Proteção antes de fechar a página (se não salvo por mais de 5 minutos)
+window.addEventListener('beforeunload', (e) => {
+    saveLocalState();
+
+    const unsavedMs = Date.now() - lastCloudSaveTime;
+    const FIVE_MIN_MS = 5 * 60 * 1000;
+
+    if (hasUnsavedChanges && unsavedMs > FIVE_MIN_MS) {
+        e.preventDefault();
+        e.returnValue = 'Você tem progresso não salvo na nuvem por mais de 5 minutos! Deseja realmente sair sem salvar?';
+        return e.returnValue;
+    }
+});
+
 const btnTestPing = document.getElementById('btnTestPing');
 if (btnTestPing) {
     btnTestPing.addEventListener('click', async () => {
@@ -1131,7 +1423,7 @@ if (btnTestPing) {
 
 async function syncWithCloud(actionPayload = null) {
     if (!window.location.hostname || window.location.protocol === 'file:') {
-        logEl.textContent = '🛠️ Modo de Teste Local Ativo (Simulador Offline 60 FPS)';
+        logEl.textContent = '🛠️ Modo de Teste Local Ativo (Simulador Offline)';
         logEl.style.color = 'var(--orange)';
         return;
     }
@@ -1152,6 +1444,7 @@ async function syncWithCloud(actionPayload = null) {
             clicksSent = pendingClicks;
             pendingClicks = 0;
         }
+        body.userId = currentUserId;
         body.makitas = makitas;
         body.totalMakitasMade = totalMakitasMade;
         body.owned = owned;
@@ -1162,6 +1455,7 @@ async function syncWithCloud(actionPayload = null) {
         body = {
             action: 'sync',
             source: 'web',
+            userId: currentUserId,
             clicks: clicksSent,
             makitas,
             totalMakitasMade,
@@ -1184,7 +1478,6 @@ async function syncWithCloud(actionPayload = null) {
         applyServerState(data);
     } catch (err) {
         measuredPingMs = null;
-        // Recupera cliques caso falhe o envio
         pendingClicks += clicksSent;
         logEl.textContent = '⚠️ Modo autônomo local (aguardando conexão com a nuvem)';
         logEl.style.color = 'var(--orange)';
@@ -1194,27 +1487,16 @@ async function syncWithCloud(actionPayload = null) {
     }
 }
 
-// Sincronização periódica a cada 5 segundos em segundo plano
+// Sincronização periódica de telemetria a cada 15 segundos em segundo plano
 setInterval(() => {
     syncWithCloud();
-}, 5000);
-
-// Envio seguro ao trocar de aba ou fechar o navegador
-window.addEventListener('beforeunload', () => {
-    if (pendingClicks > 0) {
-        const payload = JSON.stringify({ action: 'sync', clicks: pendingClicks, makitas });
-        if (navigator.sendBeacon) {
-            navigator.sendBeacon('/api/state', new Blob([payload], { type: 'application/json' }));
-        }
-    }
-    saveLocalState();
-});
+}, 15000);
 
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
         saveLocalState();
-        if (pendingClicks > 0) {
-            syncWithCloud();
+        if (currentUserId && hasUnsavedChanges) {
+            saveUserProgressToCloud(false);
         }
     }
 });
@@ -1229,27 +1511,28 @@ if (resetGameBtn) {
     });
 }
 
-// ---------- MOTOR DE RENDERIZAÇÃO CONTÍNUA DO CLIENTE (60 FPS) ----------
+// ---------- MOTOR DE RENDERIZAÇÃO CONTÍNUA DO CLIENTE (TAXA NATIVA DO MONITOR) ----------
 let lastFrameTime = performance.now();
 
 function gameLoop(now) {
     const dt = Math.min(0.2, (now - lastFrameTime) / 1000.0);
     lastFrameTime = now;
 
-    // Produção contínua e suave a 60 FPS
+    // Produção contínua e suave na taxa de quadros nativa da GPU/Monitor
     if (mps > 0) {
         const gain = mps * dt;
         makitas += gain;
         totalMakitasMade += gain;
+        hasUnsavedChanges = true;
     }
 
-    // Atualização rápida de texto a 60 FPS (apenas 2 elementos DOM)
+    // Atualização rápida de texto (apenas 2 elementos DOM)
     counterEl.textContent = formatCompactNumber(makitas);
     counterEl.title = formatFullNumber(makitas) + ' Makitas';
     rateEl.textContent = mps >= 1000 ? formatCompactNumber(mps) : mps.toFixed(1);
     rateEl.title = mps.toLocaleString('pt-BR') + ' por segundo';
 
-    // Renderização throttled de listas/botões (6 FPS ou quando dirty) para máxima eficiência
+    // Renderização throttled de listas/botões para máxima eficiência
     if (isDirty || (now - lastThrottledRender >= THROTTLE_RENDER_MS)) {
         isDirty = false;
         lastThrottledRender = now;
@@ -1260,20 +1543,53 @@ function gameLoop(now) {
 }
 
 // ---------- INICIALIZAÇÃO DO JOGO ----------
-loadLocalState();
-mps = calculateLocalMps();
-serverClickPower = calculateLocalClickPower();
+function initGame() {
+    currentUserId = localStorage.getItem('makita_active_user_id') || null;
+    currentUserName = localStorage.getItem('makita_active_user_name') || null;
 
-buildShopList();
-buildPermTree();
-renderUI();
-syncWithCloud();
-fetchRemoteVersion();
+    if (btnSwitchProfileEl) {
+        btnSwitchProfileEl.addEventListener('click', () => {
+            openProfileModal();
+        });
+    }
 
-// Intervalos periódicos de telemetria e diagnóstico
-setInterval(fetchRemoteVersion, 60000); // Consulta nova versão remota a cada 1 minuto
-setInterval(updateStatusUI, 1000);      // Atualiza contadores e tempos relativos a cada segundo
+    if (btnSaveCloudEl) {
+        btnSaveCloudEl.addEventListener('click', () => {
+            saveUserProgressToCloud(true);
+        });
+    }
 
-// Inicia o motor gráfico suave a 60 FPS
-requestAnimationFrame(gameLoop);
+    if (newProfileFormEl) {
+        newProfileFormEl.addEventListener('submit', (e) => {
+            e.preventDefault();
+            if (newProfileInputEl) {
+                createNewProfile(newProfileInputEl.value);
+                newProfileInputEl.value = '';
+            }
+        });
+    }
+
+    buildShopList();
+    buildPermTree();
+
+    if (currentUserId) {
+        updateProfileUI();
+        loadLocalState();
+        fetchUserProfileState(currentUserId);
+    } else {
+        openProfileModal();
+    }
+
+    renderUI();
+    syncWithCloud();
+    fetchRemoteVersion();
+
+    setInterval(fetchRemoteVersion, 60000); // Consulta nova versão remota a cada 1 minuto
+    setInterval(updateStatusUI, 1000);      // Atualiza contadores e tempos relativos a cada segundo
+
+    // Inicia o motor gráfico irrestrito (suave e fluido)
+    requestAnimationFrame(gameLoop);
+}
+
+initGame();
 
