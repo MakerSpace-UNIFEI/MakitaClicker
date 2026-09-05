@@ -46,6 +46,25 @@ web/
 
 ---
 
+## 📊 Aba de Estatísticas Detalhadas
+A aba **Estatísticas** organiza em tempo real métricas de sessão, persistência e produção:
+1. **Perfil & Sincronização na Nuvem:**
+   - **Perfil Ativo:** Apelido do jogador em sessão.
+   - **Status na Nuvem:** Estado visual de sincronização (`🟢 Salvo na Nuvem` ou `🟡 Alterações pendentes`).
+   - **Último Save na Nuvem:** Data e horário da última persistência confirmada no Cloudflare KV.
+   - **Criação do Perfil:** Data/hora de quando o jogador foi cadastrado.
+   - **Tempo Nesta Sessão:** Cronômetro contínuo de tempo jogado na aba ativa.
+   - **Líder Global (Top Player):** Jogador líder do ranking exibido também no LCD da ESP8266.
+2. **Economia & Produção:**
+   - Makitas atuais e Total histórico produzido.
+   - Progresso percentual da Meta Lendária 99B.
+   - Produção passiva atual (MPS) e Poder efetivo por clique.
+   - Contador de cliques manuais efetuados.
+   - Total somado de unidades de oficinas construídas.
+   - Total de melhorias adquiridas na árvore tecnológica (X/20).
+
+---
+
 ## 📡 Aba de Status & Telemetria do Hardware
 
 Implementada para monitorar a saúde e o status do console físico em tempo real:

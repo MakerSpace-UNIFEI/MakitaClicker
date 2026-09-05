@@ -10,8 +10,12 @@ let serverClickPower = 1.0;
 // ---------- PERFIL ATIVO & CONTROLE DE SALVAMENTO ----------
 let currentUserId = null;
 let currentUserName = null;
-let lastCloudSaveTime = Date.now();
+let currentUserCreatedAt = null;
+let lastCloudSaveTime = 0;
 let hasUnsavedChanges = false;
+let totalClicks = 0;
+const sessionStartTime = Date.now();
+let latestTopPlayer = null;
 
 // ---------- estado ----------
 let makitas = 0;
@@ -287,6 +291,16 @@ const goalPercentTextEl = document.getElementById('goalPercentText');
 const goalProgressBarEl = document.getElementById('goalProgressBar');
 const goalStatusMsgEl = document.getElementById('goalStatusMsg');
 
+const statProfileNameEl = document.getElementById('statProfileName');
+const statCloudStatusEl = document.getElementById('statCloudStatus');
+const statLastSaveEl = document.getElementById('statLastSave');
+const statCreatedAtEl = document.getElementById('statCreatedAt');
+const statSessionTimeEl = document.getElementById('statSessionTime');
+const statTopPlayerLeaderEl = document.getElementById('statTopPlayerLeader');
+const statGoalProgressEl = document.getElementById('statGoalProgress');
+const statTotalClicksEl = document.getElementById('statTotalClicks');
+const statTotalOwnedEl = document.getElementById('statTotalOwned');
+
 // ---------- CONTROLE DE ABAS ----------
 const tabBtns = document.querySelectorAll('.center-nav .navbtn');
 tabBtns.forEach(btn => {
@@ -314,6 +328,7 @@ function getCompactGameState() {
     return {
         makitas,
         totalMakitasMade,
+        totalClicks,
         upgrades: upgradesArr,
         perms: permsArr,
         lastUpdate: Date.now()
@@ -327,6 +342,9 @@ function applyCompactState(data) {
     }
     if (typeof data.totalMakitasMade === 'number') {
         totalMakitasMade = data.totalMakitasMade;
+    }
+    if (typeof data.totalClicks === 'number') {
+        totalClicks = data.totalClicks;
     }
     if (Array.isArray(data.upgrades)) {
         upgrades.forEach((u, idx) => {
@@ -356,6 +374,8 @@ function saveLocalState() {
     try {
         const saveObj = getCompactGameState();
         saveObj.name = currentUserName;
+        saveObj.createdAt = currentUserCreatedAt;
+        saveObj.lastCloudSaveTime = lastCloudSaveTime;
         localStorage.setItem(getLocalStorageKey(), JSON.stringify(saveObj));
     } catch (e) {
         // LocalStorage desabilitado ou cheio
@@ -368,6 +388,12 @@ function loadLocalState() {
         if (!raw) return false;
         const data = JSON.parse(raw);
         applyCompactState(data);
+        if (data.createdAt) {
+            currentUserCreatedAt = data.createdAt;
+        }
+        if (typeof data.lastCloudSaveTime === 'number' && data.lastCloudSaveTime > 0) {
+            lastCloudSaveTime = data.lastCloudSaveTime;
+        }
         return true;
     } catch (e) {
         return false;
@@ -671,6 +697,61 @@ function renderPermTree() {
 }
 
 function renderStats() {
+    // 1. Dados do Perfil e Nuvem
+    if (statProfileNameEl) {
+        statProfileNameEl.textContent = currentUserName || 'Sem Perfil';
+    }
+
+    if (statCloudStatusEl) {
+        if (!currentUserId) {
+            statCloudStatusEl.textContent = '⚪ Sem Perfil';
+            statCloudStatusEl.style.color = 'var(--text-lo)';
+        } else if (hasUnsavedChanges) {
+            const elapsedSec = Math.round((Date.now() - (lastCloudSaveTime || Date.now())) / 1000);
+            statCloudStatusEl.textContent = `🟡 Alterações pendentes (${elapsedSec < 60 ? elapsedSec + 's' : Math.round(elapsedSec / 60) + 'm'})`;
+            statCloudStatusEl.style.color = 'var(--orange)';
+        } else {
+            statCloudStatusEl.textContent = '🟢 Salvo na Nuvem';
+            statCloudStatusEl.style.color = 'var(--green)';
+        }
+    }
+
+    if (statLastSaveEl) {
+        if (!lastCloudSaveTime || lastCloudSaveTime === 0) {
+            statLastSaveEl.textContent = 'Ainda não salvo';
+        } else {
+            const d = new Date(lastCloudSaveTime);
+            statLastSaveEl.textContent = d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR');
+        }
+    }
+
+    if (statCreatedAtEl) {
+        if (!currentUserCreatedAt) {
+            statCreatedAtEl.textContent = '—';
+        } else {
+            const d = new Date(currentUserCreatedAt);
+            statCreatedAtEl.textContent = d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR');
+        }
+    }
+
+    if (statSessionTimeEl) {
+        const diff = Math.max(0, Math.floor((Date.now() - sessionStartTime) / 1000));
+        const hours = Math.floor(diff / 3600);
+        const mins = Math.floor((diff % 3600) / 60);
+        const secs = diff % 60;
+        statSessionTimeEl.textContent = hours > 0 ? `${hours}h ${mins}m ${secs}s` : `${mins}m ${secs}s`;
+    }
+
+    if (statTopPlayerLeaderEl) {
+        if (latestTopPlayer && latestTopPlayer.name) {
+            const topScore = formatCompactNumber(latestTopPlayer.totalMakitasMade || latestTopPlayer.makitas || 0);
+            statTopPlayerLeaderEl.textContent = `${latestTopPlayer.name} (${topScore})`;
+        } else {
+            statTopPlayerLeaderEl.textContent = 'MakerSpace (0)';
+        }
+    }
+
+    // 2. Economia e Produção
     if (statMakitasEl) {
         statMakitasEl.textContent = formatCompactNumber(makitas);
         statMakitasEl.title = formatFullNumber(makitas) + ' Makitas';
@@ -710,6 +791,15 @@ function renderStats() {
         statClickPowerEl.title = clickPower.toLocaleString('pt-BR') + ' por clique base';
     }
 
+    if (statTotalClicksEl) {
+        statTotalClicksEl.textContent = totalClicks.toLocaleString('pt-BR');
+    }
+
+    if (statTotalOwnedEl) {
+        const totalUnits = Object.values(owned).reduce((sum, val) => sum + (val || 0), 0);
+        statTotalOwnedEl.textContent = `${totalUnits} un.`;
+    }
+
     if (statPermCountEl) {
         const purchasedCount = permanentUpgrades.filter(u => u.purchased).length;
         statPermCountEl.textContent = `${purchasedCount}/${permanentUpgrades.length}`;
@@ -719,6 +809,10 @@ function renderStats() {
     const goalTotal = 99000000000;
     const currentProgress = Math.max(makitas, totalMakitasMade);
     const pct = Math.min(100, (currentProgress / goalTotal) * 100);
+
+    if (statGoalProgressEl) {
+        statGoalProgressEl.textContent = pct >= 100 ? '100.00% 👑' : (pct < 0.01 && currentProgress > 0 ? '>0.01%' : pct.toFixed(2) + '%');
+    }
 
     if (goalPercentTextEl && goalProgressBarEl) {
         goalPercentTextEl.textContent = pct >= 100 ? '100.00% CONCLUÍDO! 👑' : (pct < 0.01 && currentProgress > 0 ? '>0.01%' : pct.toFixed(2) + '%');
@@ -764,16 +858,26 @@ function renderUI() {
 }
 
 // ---------- EFEITOS VISUAIS E CLIQUES ----------
-function showFloatPlus(amount) {
+function showFloatText(text) {
+    if (!makitaBtn || !clickArea) return;
     const rect = makitaBtn.getBoundingClientRect();
     const areaRect = clickArea.getBoundingClientRect();
     const el = document.createElement('span');
     el.className = 'float-plus';
-    el.textContent = '+' + (amount >= 1000 ? formatCompactNumber(amount) : (amount % 1 === 0 ? amount : amount.toFixed(1)));
+    el.textContent = text;
     el.style.left = (rect.left - areaRect.left + rect.width / 2) + 'px';
     el.style.top = (rect.top - areaRect.top) + 'px';
     clickArea.appendChild(el);
     el.addEventListener('animationend', () => el.remove());
+}
+
+function showFloatPlus(amount) {
+    if (typeof amount !== 'number') {
+        showFloatText(String(amount));
+        return;
+    }
+    const text = '+' + (amount >= 1000 ? formatCompactNumber(amount) : (amount % 1 === 0 ? amount : amount.toFixed(1)));
+    showFloatText(text);
 }
 
 function spawnFlyingMakita() {
@@ -836,6 +940,7 @@ makitaBtn.addEventListener('click', () => {
 
     makitas += gain;
     totalMakitasMade += gain;
+    totalClicks++;
     pendingClicks++;
     hasUnsavedChanges = true;
     isDirty = true;
@@ -855,6 +960,7 @@ function resetAllProgress(sendToServer = true) {
     makitas = 0;
     mps = 0;
     totalMakitasMade = 0;
+    totalClicks = 0;
     prevMakitas = 0;
     pendingClicks = 0;
     upgrades.forEach(u => { owned[u.id] = 0; });
@@ -936,6 +1042,10 @@ function applyServerState(data) {
             logEl.textContent = data._kv_diag ? `⚠️ ${data._kv_diag}` : '⚠️ KV não vinculado no Cloudflare Pages (Pages > Settings > Functions > KV)';
             logEl.style.color = 'var(--orange)';
         }
+    }
+
+    if (data.topPlayer) {
+        latestTopPlayer = data.topPlayer;
     }
 
     latestServerData = data;
@@ -1261,10 +1371,12 @@ function selectProfile(user) {
     if (!user || !user.id) return;
     currentUserId = user.id;
     currentUserName = user.name;
+    currentUserCreatedAt = user.createdAt || Date.now();
 
     try {
         localStorage.setItem('makita_active_user_id', currentUserId);
         localStorage.setItem('makita_active_user_name', currentUserName);
+        localStorage.setItem('makita_active_user_created_at', String(currentUserCreatedAt));
     } catch (e) {}
 
     updateProfileUI();
@@ -1276,6 +1388,7 @@ function selectProfile(user) {
         makitas = 0;
         mps = 0;
         totalMakitasMade = 0;
+        totalClicks = 0;
         prevMakitas = 0;
         pendingClicks = 0;
         upgrades.forEach(u => { owned[u.id] = 0; });
@@ -1297,9 +1410,17 @@ async function fetchUserProfileState(userId) {
         const data = await res.json();
         applyCompactState(data);
         saveLocalState();
-        lastCloudSaveTime = Date.now();
+        if (typeof data.lastSavedAt === 'number' && data.lastSavedAt > 0) {
+            lastCloudSaveTime = data.lastSavedAt;
+        } else {
+            lastCloudSaveTime = Date.now();
+        }
+        if (data.topPlayer) {
+            latestTopPlayer = data.topPlayer;
+        }
         hasUnsavedChanges = false;
         updateSaveIndicator();
+        renderStats();
     } catch (e) {
         console.warn('Erro ao carregar estado do perfil na nuvem:', e);
     }
@@ -1341,7 +1462,7 @@ async function saveUserProgressToCloud(isManual = false) {
 
     if (isManual && btnSaveCloudEl) {
         btnSaveCloudEl.disabled = true;
-        btnSaveCloudEl.textContent = '💾 Salvando...';
+        btnSaveCloudEl.textContent = '⏳ Salvando...';
     }
     if (saveStatusTextEl) {
         saveStatusTextEl.textContent = '🟡 Salvando na Nuvem...';
@@ -1364,21 +1485,44 @@ async function saveUserProgressToCloud(isManual = false) {
         const data = await res.json();
         lastCloudSaveTime = Date.now();
         hasUnsavedChanges = false;
-        if (saveStatusTextEl) {
-            saveStatusTextEl.textContent = '🟢 Salvo na Nuvem';
-            saveStatusTextEl.style.color = 'var(--green)';
+
+        if (data && data.topPlayer) {
+            latestTopPlayer = data.topPlayer;
         }
+
+        saveLocalState();
+        updateSaveIndicator();
+        renderStats();
+
         if (isManual) {
-            showFloatPlus('💾 Salvo!');
+            showFloatText('💾 Salvo!');
+            if (btnSaveCloudEl) {
+                btnSaveCloudEl.disabled = false;
+                btnSaveCloudEl.textContent = '✅ Salvo!';
+                setTimeout(() => {
+                    if (btnSaveCloudEl && btnSaveCloudEl.textContent === '✅ Salvo!') {
+                        btnSaveCloudEl.textContent = '💾 Salvar na Nuvem';
+                    }
+                }, 1800);
+            }
         }
     } catch (e) {
         console.warn('Falha ao salvar progresso na nuvem:', e);
         if (saveStatusTextEl) {
-            saveStatusTextEl.textContent = '⚠️ Falha ao salvar (offline)';
+            saveStatusTextEl.textContent = '⚠️ Falha ao salvar: ' + (e.message || 'offline');
             saveStatusTextEl.style.color = 'var(--orange)';
         }
+        if (isManual && btnSaveCloudEl) {
+            btnSaveCloudEl.disabled = false;
+            btnSaveCloudEl.textContent = '❌ Erro ao salvar';
+            setTimeout(() => {
+                if (btnSaveCloudEl && btnSaveCloudEl.textContent === '❌ Erro ao salvar') {
+                    btnSaveCloudEl.textContent = '💾 Salvar na Nuvem';
+                }
+            }, 2500);
+        }
     } finally {
-        if (btnSaveCloudEl) {
+        if (btnSaveCloudEl && !isManual) {
             btnSaveCloudEl.disabled = false;
             btnSaveCloudEl.textContent = '💾 Salvar na Nuvem';
         }
@@ -1546,6 +1690,10 @@ function gameLoop(now) {
 function initGame() {
     currentUserId = localStorage.getItem('makita_active_user_id') || null;
     currentUserName = localStorage.getItem('makita_active_user_name') || null;
+    const storedCreatedAt = localStorage.getItem('makita_active_user_created_at');
+    if (storedCreatedAt) {
+        currentUserCreatedAt = Number(storedCreatedAt);
+    }
 
     if (btnSwitchProfileEl) {
         btnSwitchProfileEl.addEventListener('click', () => {
@@ -1585,7 +1733,10 @@ function initGame() {
     fetchRemoteVersion();
 
     setInterval(fetchRemoteVersion, 60000); // Consulta nova versão remota a cada 1 minuto
-    setInterval(updateStatusUI, 1000);      // Atualiza contadores e tempos relativos a cada segundo
+    setInterval(() => {
+        updateStatusUI();
+        renderStats();
+    }, 1000); // Atualiza contadores, telemetria e estatísticas a cada segundo
 
     // Inicia o motor gráfico irrestrito (suave e fluido)
     requestAnimationFrame(gameLoop);
