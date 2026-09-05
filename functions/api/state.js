@@ -259,15 +259,15 @@ function getTopPlayer(usersList) {
 
 function getKV(env) {
   if (!env) {
-    return { kv: null, name: null, diag: 'Objeto context.env não fornecido pelo Cloudflare Pages.' };
+    return { kv: null, name: null, kvName: null, kvConnected: false, diag: 'Objeto context.env não fornecido pelo Cloudflare Pages.' };
   }
   if (env.MAKITA_KV && typeof env.MAKITA_KV.get === 'function') {
-    return { kv: env.MAKITA_KV, name: 'MAKITA_KV', diag: 'MAKITA_KV conectado com sucesso.' };
+    return { kv: env.MAKITA_KV, name: 'MAKITA_KV', kvName: 'MAKITA_KV', kvConnected: true, diag: 'MAKITA_KV conectado com sucesso.' };
   }
   for (const [key, val] of Object.entries(env)) {
     if (key === 'ASSETS') continue; // Ignora o repositório interno de assets estáticos do Pages
     if (val && typeof val.get === 'function' && typeof val.put === 'function') {
-      return { kv: val, name: key, diag: `KV detectado via binding alternativo: '${key}'` };
+      return { kv: val, name: key, kvName: key, kvConnected: true, diag: `KV detectado via binding alternativo: '${key}'` };
     }
   }
 
@@ -288,7 +288,7 @@ function getKV(env) {
     diag = `MAKITA_KV está presente como '${makitaType}', mas não possui os métodos esperados de KV (.get / .put).`;
   }
 
-  return { kv: null, name: null, diag };
+  return { kv: null, name: null, kvName: null, kvConnected: false, diag };
 }
 
 // Produção passiva autoritativa baseada no delta de tempo.
