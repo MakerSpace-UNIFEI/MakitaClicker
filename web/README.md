@@ -99,13 +99,13 @@ O plano gratuito do Cloudflare KV permite até 1.000 gravações (*writes*) por 
 
 ## 🛠️ Como Testar Localmente
 
-1. Abra `web/index.html` em qualquer navegador ou use o comando:
+1. Rode o servidor de desenvolvimento do Vite na raiz do repositório:
    ```bash
-   npx serve web
+   npm install
+   npm run dev
    ```
 2. O motor entrará automaticamente em **Modo Simulador Offline**, funcionando plenamente a 60 FPS sem requisições de rede.
-3. Para validar a sintaxe dos scripts antes de publicar:
+3. Para validar a build web para produção e compilar o projeto:
    ```bash
-   node -c web/game.js
-   node -c functions/api/state.js
+   npm run build:web
    ```

@@ -32,12 +32,9 @@ arduino-cli core update-index
 arduino-cli core install esp8266:esp8266
 
 echo "=== [3/3] Instalando Bibliotecas ESP ==="
-arduino-cli lib install "ArduinoJson" "LiquidCrystal I2C"
+arduino-cli lib install "ArduinoJson" "LiquidCrystal I2C" || true
 
-mkdir -p online
-
-echo "=== Copiando Assets Web para Hospedagem no Cloudflare Pages ==="
-cp -r web/* online/
+mkdir -p dist
 
 echo "=== Compilando Firmware ESP8266 ==="
 SKETCH_DIR="firmware/codigo_esp"
@@ -46,10 +43,10 @@ arduino-cli compile --fqbn esp8266:esp8266:nodemcuv2 \
   --output-dir ./build_esp \
   "$SKETCH_DIR"
 
-mv ./build_esp/*.bin ./online/firmware.bin || true
+mv ./build_esp/*.bin ./dist/firmware.bin || true
 
 # Gera o version.json com a mesma versão gravada no firmware
-cat > ./online/version.json << VERSIONJSON
+cat > ./dist/version.json << VERSIONJSON
 {
   "firmware_version": $VERSION,
   "firmware_url": "https://makitaclicker.pages.dev/firmware.bin"
@@ -57,6 +54,6 @@ cat > ./online/version.json << VERSIONJSON
 VERSIONJSON
 
 echo "[VERSION] version.json gerado:"
-cat ./online/version.json
+cat ./dist/version.json
 
 echo "=== Pipeline concluido com sucesso ==="

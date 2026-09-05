@@ -67,8 +67,10 @@ MakitaClicker/
 │   ├── GAME_DESIGN.md             # Tabela de balanceamento, custos e fórmulas
 │   └── README.md                  # Manual completo de hardware e pinagem
 │
-├── build.sh                       # 🚀 Script de CI/CD executado pela Cloudflare
-└── online/                        # Pasta de saída pública gerada durante o build
+├── package.json                   # 📦 Configuração NPM (Scripts de Build)
+├── vite.config.js                 # ⚡ Configuração do empacotador Vite (Frontend)
+├── build-firmware.sh              # 🚀 Script de CI/CD que compila a ESP via arduino-cli
+└── dist/                          # 📦 Pasta de saída final gerada após o build
 ```
 
 ---
@@ -139,31 +141,27 @@ Para evitar que o progresso seja resetado acidentalmente no site enquanto a ESP8
 
 ## ☁️ Como Funciona o Build Remoto (CI/CD na Cloudflare Pages)
 
-Toda vez que você executa `git push origin main`, o pipeline no Cloudflare Pages roda automaticamente o script [`build.sh`](build.sh):
+Toda vez que você executa `git push origin main`, o pipeline no Cloudflare Pages roda automaticamente o comando `npm run build`:
 
 ```mermaid
 flowchart TD
     A[git push origin main] --> B[Cloudflare Pages Runner]
-    B --> C[Executa build.sh]
-    C --> D[git fetch --unshallow & calcula VERSION pelo número de commits]
-    D --> E[Patcha CURRENT_FIRMWARE_VER no codigo_esp.ino via sed]
-    E --> F[Instala arduino-cli + core esp8266:esp8266]
-    F --> G[Instala bibliotecas: ArduinoJson e LiquidCrystal I2C]
-    G --> H[Copia web/* para pasta online/]
-    H --> I[Compila codigo_esp.ino gerando firmware.bin]
-    I --> J[Gera version.json com versão e URL de download]
-    J --> K[Publica pasta online/ na CDN Global Cloudflare Pages]
-    K --> L[ESP8266 detecta novo version.json e atualiza via OTA]
+    B --> C[npm run build:web]
+    C --> D[Vite: Otimiza e empacota o site em dist/]
+    D --> E[npm run build:firmware]
+    E --> F[Executa build-firmware.sh]
+    F --> G[Instala arduino-cli + patcha versão]
+    G --> H[Compila codigo_esp.ino para dist/firmware.bin]
+    H --> I[Gera manifesto dist/version.json]
+    I --> J[Publica pasta dist/ na CDN Global]
+    J --> K[ESP8266 detecta novo version.json e atualiza via OTA]
 ```
 
-### Detalhes das Etapas do `build.sh`:
-1. **Contagem de Versão:** Faz `git fetch --unshallow` e obtém `git rev-list --count HEAD` (ex: versão 63).
-2. **Patch Automático:** Substitui `#define CURRENT_FIRMWARE_VER` diretamente no arquivo `codigo_esp.ino` antes da compilação.
-3. **Instalação do `arduino-cli`:** Baixa o binário oficial do compilador Arduino para Linux x86_64.
-4. **Instalação do Core e Dependências:** Configura o repositório da ESP8266 e instala o core `esp8266:esp8266:nodemcuv2` e as bibliotecas necessárias.
-5. **Compilação Headless:** Compila o código C++ gerando o binário `online/firmware.bin`.
-6. **Manifesto OTA:** Cria o arquivo `online/version.json` com o número exato da versão e o link HTTPS do binário.
-7. **Deploy Imediato:** Os arquivos estáticos e as Cloudflare Functions entram no ar em menos de 1 minuto em escala global.
+### Detalhes das Etapas do Build:
+1. **Frontend Web (Vite):** Empacota e minifica todo o código JavaScript e CSS, enviando os arquivos web de produção para a pasta `dist/`.
+2. **Contagem de Versão:** Faz `git fetch --unshallow` e obtém a versão com base na contagem de commits.
+3. **Compilação Headless do Firmware:** O `arduino-cli` compila o código C++ injetando a nova versão em `#define CURRENT_FIRMWARE_VER`, e salva `firmware.bin` em `dist/`.
+4. **Deploy Imediato:** Os arquivos estáticos e as Cloudflare Functions entram no ar em escala global.
 
 ---
 
@@ -188,7 +186,12 @@ As oficinas devem ter suas configurações espelhadas para manter paridade entre
 - Se a habilidade tiver efeito na produção física da ESP, adicione a respectiva variável booleana em [`firmware/codigo_esp/codigo_esp.ino`](firmware/codigo_esp/codigo_esp.ino) dentro da função `recalculateStats()`.
 
 ### 4. Testes Locais da Web
-Você pode abrir o arquivo [`web/index.html`](web/index.html) diretamente no navegador (via extensão Live Server ou duplo clique). O motor gráfico detecta que o protocolo é `file:` ou `localhost` e entra em **Modo Simulador Offline**, permitindo testar todas as animações, árvores e cálculos sem necessidade de conexão com a Cloudflare.
+Para testar o site localmente com Hot Module Replacement, rode os comandos:
+```bash
+npm install
+npm run dev
+```
+O Vite iniciará um servidor em `localhost`. O motor gráfico detectará o ambiente local e entrará em **Modo Simulador Offline**, permitindo testar todas as animações, árvores e cálculos sem necessidade de conexão com a API da Cloudflare.
 
 ---
 

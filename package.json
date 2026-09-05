@@ -1,0 +1,27 @@
+{
+  "name": "makitaclicker",
+  "version": "1.0.0",
+  "description": "> **MakerSpace UNIFEI**   > **Autores:** Nicolae Maximus T. N. Lopes · Victor Augusto de A. Silvério · Oliver Daniel Schiinke   > **Link de Produção:** [https://makitaclicker.pages.dev](https://makitaclicker.pages.dev)   > **API Serverless:** [https://makitaclicker.pages.dev/api/state](https://makitaclicker.pages.dev/api/state)   > **Manifesto OTA:** [https://makitaclicker.pages.dev/version.json](https://makitaclicker.pages.dev/version.json)",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build:web": "vite build",
+    "build:firmware": "bash build-firmware.sh",
+    "build": "npm run build:web && npm run build:firmware"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MakerSpace-UNIFEI/MakitaClicker.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/MakerSpace-UNIFEI/MakitaClicker/issues"
+  },
+  "homepage": "https://github.com/MakerSpace-UNIFEI/MakitaClicker#readme",
+  "devDependencies": {
+    "vite": "^8.2.2"
+  }
+}

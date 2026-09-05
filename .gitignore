@@ -1,5 +1,6 @@
 # ── Build Outputs ──
-online/
+dist/
+node_modules/
 build_esp/
 
 ### IntelliJ IDEA ###
