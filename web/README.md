@@ -124,7 +124,8 @@ Para manter o tráfego minúsculo e respeitar a cota diária gratuita do Cloudfl
 ## 🔒 Painel Administrativo (`/admin.html`)
 
 Interface dedicada para gestão de perfis e manutenção do servidor:
-- **Autenticação:** Protegida criptograficamente no cliente e no servidor por hash SHA-256 (`ADMMAKER`), sem trafegar senhas em texto puro.
+- **URL:** [https://makitaclicker.pages.dev/admin.html](https://makitaclicker.pages.dev/admin.html)
+- **Senha:** `ADMMAKER` (validada via hash SHA-256 no cliente e no servidor para segurança de ponta a ponta).
 - **Funcionalidades:**
   - Listagem completa de jogadores cadastrados com data de criação e saldo atual.
   - Exclusão individual de perfis do Cloudflare KV.

@@ -150,12 +150,17 @@ Para evitar que o progresso seja restaurado acidentalmente no site por nós CDN 
 
 ## 🔒 Painel Administrativo (`/admin.html`)
 
-Acesse em: `https://makitaclicker.pages.dev/admin.html`
+O painel administrativo permite gerenciar a base de dados de jogadores e o hardware sem expor endpoints desprotegidos.
 
-O painel administrativo permite gerenciar a base de dados de jogadores e o hardware sem expor endpoints desprotegidos:
-- **Autenticação Criptográfica (SHA-256):** A senha `ADMMAKER` é convertida em hash SHA-256 (`c9a2abd67ad59717195e5d8a6f917ba5084d81af244b0a8d40c8b30f234742d7`) diretamente pelo navegador via `crypto.subtle.digest`. O servidor confere apenas o hash, impedindo o tráfego ou armazenamento de senhas em texto puro.
-- **Gerenciamento de Perfis:** Exibe tabela completa de perfis salvos no KV com ID, apelido, data de cadastro e progresso de Makitas.
-- **Exclusão Segura:** Permite remover jogadores individualmente (com recálculo dinâmico do `topPlayer` líder) ou apagar toda a base de perfis com confirmação de segurança.
+- **URL de Acesso:** [https://makitaclicker.pages.dev/admin.html](https://makitaclicker.pages.dev/admin.html)
+- **Senha de Administrador:** `ADMMAKER`
+
+> [!NOTE]
+> A senha existe para proteger a integridade do jogo e evitar que jogadores apaguem acidentalmente o progresso uns dos outros. No código JavaScript, a senha é validada através de seu hash criptográfico SHA-256 (`c9a2abd67ad59717195e5d8a6f917ba5084d81af244b0a8d40c8b30f234742d7`) gerado localmente pelo navegador (`crypto.subtle.digest`), evitando o envio de senhas em texto puro.
+
+### Funcionalidades do Painel:
+- **Gerenciamento de Perfis:** Exibe tabela completa de perfis salvos no Cloudflare KV com ID, apelido, data de cadastro e progresso de Makitas.
+- **Exclusão Segura:** Permite remover jogadores individualmente (com recálculo dinâmico do `topPlayer` líder) ou apagar toda a base de perfis com confirmação em duas etapas.
 - **Reset do Console Físico:** Dispara a reinicialização de fábrica da telemetria e do progresso do hardware embarcado.
 
 ---
