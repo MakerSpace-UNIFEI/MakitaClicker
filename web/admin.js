@@ -245,11 +245,11 @@ async function resetGlobalHardware() {
         const res = await fetch('/api/state', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'reset' })
+            body: JSON.stringify({ action: 'admin_reset_hardware', authHash: currentAuthHash })
         });
         const data = await res.json();
-        if (data.isReset) {
-            alert('Ordem de reset emitida com sucesso! A ESP8266 física apagará sua memória flash.');
+        if (data.isReset || data.success) {
+            alert('Ordem de reset latente emitida com sucesso! A ESP8266 física apagará sua memória e responderá com ACK.');
         }
     } catch (e) {
         alert('Erro ao emitir ordem: ' + e.message);

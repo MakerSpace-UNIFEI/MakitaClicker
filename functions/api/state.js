@@ -741,6 +741,38 @@ export async function onRequestPost(context) {
     });
   }
 
+  if (action === 'admin_reset_hardware') {
+    const authHash = String(body.authHash || '').trim().toLowerCase();
+    if (authHash !== ADMIN_AUTH_HASH) {
+      return new Response(JSON.stringify({ success: false, error: 'Não autorizado.' }), {
+        status: 401,
+        headers: CORS_HEADERS
+      });
+    }
+
+    const resetId = Date.now();
+    const newState = getDefaultState();
+    newState.resetId = resetId;
+    newState.resetPendingEsp = true; // Flag latente: persiste até confirmação da ESP via ACK
+    newState.lastUpdate = resetId;
+    newState.lastKvSave = resetId;
+    await saveState(env, newState);
+
+    return new Response(JSON.stringify({
+      success: true,
+      ...newState,
+      topPlayer,
+      isReset: true,
+      resetOrder: true,
+      _kv_connected: kvConnected,
+      _kv_binding: kvName || 'NONE',
+      _kv_diag: diag
+    }), {
+      status: 200,
+      headers: CORS_HEADERS
+    });
+  }
+
   // -------------------------------------------------------------
   // AÇÃO 3: FLUXO GLOBAL / HARDWARE ESP8266 & RESET
   // -------------------------------------------------------------
@@ -749,17 +781,18 @@ export async function onRequestPost(context) {
   const previousMakitas = state.makitas || 0;
   advancePassiveProduction(state, now);
 
-  const clientMakitas = typeof body.makitas === 'number' ? body.makitas : null;
-  const clientTotal = typeof body.totalMakitasMade === 'number' ? body.totalMakitasMade : null;
-  const clicks = Math.max(0, Math.min(parseInt(body.clicks || body.count || 0, 10), 5000));
+  let clientMakitas = typeof body.makitas === 'number' ? body.makitas : null;
+  let clientTotal = typeof body.totalMakitasMade === 'number' ? body.totalMakitasMade : null;
+  let clicks = Math.max(0, Math.min(parseInt(body.clicks || body.count || 0, 10), 5000));
 
-  // Reset total disparado pelo website: emite ordem para a ESP
+  // Reset total disparado pelo website: emite ordem latente para a ESP
   if (action === 'reset') {
     const resetId = Date.now();
     const newState = getDefaultState();
     newState.resetId = resetId;
-    newState.resetPendingEsp = true; // Emite ordem contínua de reset para a ESP
+    newState.resetPendingEsp = true; // Emite ordem contínua e latente para a ESP
     newState.lastUpdate = resetId;
+    newState.lastKvSave = resetId;
     await saveState(env, newState);
     return new Response(JSON.stringify({
       ...newState,
@@ -775,13 +808,30 @@ export async function onRequestPost(context) {
     });
   }
 
-  // Confirmação de Reset vinda da ESP (A ESP avisa com um "check" que limpou sua memória)
+  // TRATAMENTO DA ORDEM DE RESET LATENTE:
+  // A ordem de reset para a ESP permanece ativa no KV até a ESP executar a limpeza e enviar resetAck: true.
   let espAckReceived = false;
-  if (isEsp && body.resetAck === true) {
-    if (state.resetPendingEsp) {
+  if (state.resetPendingEsp) {
+    if (isEsp && body.resetAck === true) {
       state.resetPendingEsp = false;
       state.lastResetAckAt = now;
       espAckReceived = true;
+      // Garante que o estado permaneça zerado e limpo
+      state.makitas = 0.0;
+      state.totalMakitasMade = 0.0;
+      state.owned = {};
+      state.perms = {};
+      state.mps = 0.0;
+      state.clickPower = 1.0;
+    } else {
+      // Enquanto a ESP não executar o reset e enviar o ACK, rejeita qualquer dado antigo
+      clientMakitas = null;
+      clientTotal = null;
+      clicks = 0;
+      body.owned = null;
+      body.perms = null;
+      state.makitas = 0.0;
+      state.totalMakitasMade = 0.0;
     }
   }
 

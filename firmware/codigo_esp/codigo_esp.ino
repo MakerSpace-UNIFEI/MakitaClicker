@@ -26,23 +26,20 @@ const unsigned long INTERVALO_UPDATE_LCD = 75; // ~13 FPS para não sobrecarrega
 bool estadoAnteriorBotao = HIGH;
 unsigned long ultimoTempoBotao = 0;
 
-// Animação e feedback visual
+// Feedback visual de clique
 unsigned long ultimoClickVisual = 0;
 const unsigned long duracaoFeedbackClick = 600;
-unsigned long ultimoTickAnimacao = 0;
-int frameAnimacao = 0;
-unsigned long ultimoTickInfo = 0;
-int modoInfoLinha3 = 0;
-String webInfo = "makitaclicker.pages.dev";
 
-// Caracteres Customizados na CGRAM do LCD (5x8 pixels)
-byte iconBlade0[8] = { B00100, B01110, B11011, B00100, B00100, B11011, B01110, B00100 };
-byte iconBlade1[8] = { B10001, B01110, B01010, B11111, B01010, B01110, B10001, B00000 };
-byte iconCoin[8]   = { B01110, B10001, B10101, B10101, B10101, B10001, B01110, B00000 };
-byte iconBolt[8]   = { B00010, B00100, B01000, B11111, B00010, B00100, B01000, B00000 };
-byte iconFactory[8]= { B10010, B11011, B11011, B11011, B11111, B11111, B11111, B00000 };
-byte iconSpark[8]  = { B00100, B10101, B01110, B11111, B01110, B10101, B00100, B00000 };
-byte iconTrophy[8] = { B11111, B10101, B01110, B00100, B00100, B01110, B11111, B00000 };
+// Status operacional da ESP (exibido na Linha 3 do LCD: Ativo, Offline, Conectando, Sincroniz., Apagando..., Reset OK!)
+String statusAtual = "Iniciando";
+
+// Double-buffering nas 4 linhas do LCD para eliminar flicker e latência I2C
+String prevLcdLines[4] = {"", "", "", ""};
+
+// Variáveis de controle de conexão Wi-Fi e reconexão infinita
+unsigned long ultimoWifiRetry = 0;
+bool wifiConectadoAnterior = false;
+const unsigned long WIFI_RETRY_INTERVAL_MS = 20000; // Retry infinito a cada 20 segundos
 
 const int NUM_UPGRADES = 24;
 
@@ -175,30 +172,18 @@ String formatarNumero(double num) {
   }
 }
 
-// Double-buffering nas linhas 2 e 3 para economizar transmissões I2C
-String prevLcdLine2 = "";
-String prevLcdLine3 = "";
-
 void printLinhaFormatada(int linha, String texto) {
-  if (!lcd) return;
+  if (!lcd || linha < 0 || linha >= 4) return;
   while (texto.length() < 20) {
     texto += " ";
   }
   if (texto.length() > 20) {
     texto = texto.substring(0, 20);
   }
-  if (linha == 2 && texto == prevLcdLine2) {
+  if (texto == prevLcdLines[linha]) {
     return;
   }
-  if (linha == 3 && texto == prevLcdLine3) {
-    return;
-  }
-  if (linha == 2) {
-    prevLcdLine2 = texto;
-  }
-  if (linha == 3) {
-    prevLcdLine3 = texto;
-  }
+  prevLcdLines[linha] = texto;
   lcd->setCursor(0, linha);
   lcd->print(texto);
 }
@@ -208,124 +193,48 @@ void atualizarLCD() {
   unsigned long now = millis();
   bool clickAtivo = (now - ultimoClickVisual < duracaoFeedbackClick);
 
-  // Linha 0: Cabeçalho com Ícones de Disco Giratório / Faíscas
-  uint8_t bladeChar = (frameAnimacao % 2 == 0) ? 0 : 1;
-  static uint8_t prevBladeChar = 255;
-  static bool prevClickAtivo0 = false;
-  if (bladeChar != prevBladeChar || clickAtivo != prevClickAtivo0) {
-    prevBladeChar = bladeChar;
-    prevClickAtivo0 = clickAtivo;
-    lcd->setCursor(0, 0);
-    if (clickAtivo) {
-      lcd->write((uint8_t)5); // iconSpark
-      lcd->print(F(" MAKITA CLICKER "));
-      lcd->write((uint8_t)5); // iconSpark
-      lcd->print(F("  "));
-    } else {
-      lcd->write(bladeChar);
-      lcd->print(F(" MAKITA CLICKER "));
-      lcd->write(bladeChar);
-      lcd->print(F("  "));
+  // Linha 0: 1° Lugar / Nome do Líder
+  String topStr;
+  String nome = (topPlayerName.length() > 0) ? topPlayerName : "MakerSpace";
+  if (topPlayerMakitas > 0) {
+    String scoreStr = " (" + formatarNumero(topPlayerMakitas) + ")";
+    int maxNomeLen = 20 - 4 - (int)scoreStr.length();
+    if (maxNomeLen > 2 && (int)nome.length() > maxNomeLen) {
+      nome = nome.substring(0, maxNomeLen);
     }
-  }
-
-  // Linha 1: Saldo de Makitas
-  bool is99B = (makitas >= 99000000000.0);
-  String saldoStr = is99B 
-      ? (" Saldo:" + formatarNumero(makitas) + " MKT!") 
-      : (" Saldo:" + formatarNumero(makitas) + " MKT");
-  while (saldoStr.length() < 19) saldoStr += " ";
-  saldoStr = saldoStr.substring(0, 19);
-
-  static String prevSaldoStr = "";
-  static bool prevIs99B = false;
-  if (saldoStr != prevSaldoStr || is99B != prevIs99B) {
-    prevSaldoStr = saldoStr;
-    prevIs99B = is99B;
-    lcd->setCursor(0, 1);
-    lcd->write(is99B ? (uint8_t)6 : (uint8_t)2);
-    lcd->print(saldoStr);
-  }
-
-  // Linha 2 e 3: Modos normais ou Exibição do Site em 2 linhas sem cortes (display 4x20)
-  bool mostrarWeb2Linhas = (modoInfoLinha3 == 0 && !clickAtivo);
-  static bool prevMostrarWeb2Linhas = false;
-  static String prevTaxaStr = "";
-  static String prevMpsStr = "";
-
-  if (mostrarWeb2Linhas != prevMostrarWeb2Linhas) {
-    prevMostrarWeb2Linhas = mostrarWeb2Linhas;
-    prevTaxaStr = ""; // Invalida cache de stats para redesenho imediato
-    prevMpsStr = "";
-    prevLcdLine2 = "";
-  }
-
-  if (mostrarWeb2Linhas) {
-    // Exibição em 2 linhas no display 4x20 para nunca cortar o domínio
-    printLinhaFormatada(2, " Site: makitaclicker");
-    printLinhaFormatada(3, "       .pages.dev   ");
+    topStr = "1o: " + nome + scoreStr;
   } else {
-    // Linha 2: Poder de Clique e Taxa de Produção (MPS)
-    String taxaStr = "+" + formatarNumero(cachedClickPower) + " | ";
-    String mpsStr = " " + formatarNumero(cachedMps) + "/s";
-    int espacoRestante = 20 - 1 - (int)taxaStr.length() - 1;
-    if (espacoRestante > 0) {
-      while ((int)mpsStr.length() < espacoRestante) mpsStr += " ";
-      mpsStr = mpsStr.substring(0, espacoRestante);
-    }
-
-    if (taxaStr != prevTaxaStr || mpsStr != prevMpsStr) {
-      prevTaxaStr = taxaStr;
-      prevMpsStr = mpsStr;
-      prevLcdLine2 = "";
-      lcd->setCursor(0, 2);
-      lcd->write((uint8_t)3); // iconBolt
-      lcd->print(taxaStr);
-      lcd->write((uint8_t)4); // iconFactory
-      lcd->print(mpsStr);
-    }
-
-    // Linha 3: Feedback de Clique ou Status Rotativo
-    if (clickAtivo) {
-      printLinhaFormatada(3, ">> CORTE EFETUADO! <<");
-    } else if (modoInfoLinha3 == 1) {
-      if (topPlayerName.length() > 0 && topPlayerName != "MakerSpace") {
-        String topStr = "Top: " + topPlayerName;
-        if (topPlayerMakitas > 0) {
-          topStr += " (" + formatarNumero(topPlayerMakitas) + ")";
-        }
-        if (topStr.length() > 20) topStr = topStr.substring(0, 20);
-        printLinhaFormatada(3, topStr);
-      } else {
-        printLinhaFormatada(3, "Top 1: MakerSpace");
-      }
-    } else if (modoInfoLinha3 == 2) {
-      if (makitas >= 99000000000.0) {
-        printLinhaFormatada(3, "** META 99B FEITA! **");
-      } else {
-        float pct = (float)(makitas / 99000000000.0) * 100.0;
-        if (pct < 0.01 && makitas > 0) {
-          printLinhaFormatada(3, "Meta 99B: >0.01%");
-        } else {
-          printLinhaFormatada(3, "Meta 99B: " + String(pct, (pct < 10.0 ? 2 : 1)) + "%");
-        }
-      }
-    } else if (modoInfoLinha3 == 3) {
-      int totalOwned = 0;
-      for (int i = 0; i < NUM_UPGRADES; i++) totalOwned += ownedUpgrades[i];
-      printLinhaFormatada(3, "Oficinas: " + String(totalOwned) + " un.");
-    } else if (modoInfoLinha3 == 4) {
-      printLinhaFormatada(3, "FW: v" + String(CURRENT_FIRMWARE_VER) + " (OTA Ativo)");
-    } else if (modoInfoLinha3 == 5) {
-      if (WiFi.status() == WL_CONNECTED) {
-        printLinhaFormatada(3, "IP: " + WiFi.localIP().toString());
-      } else {
-        printLinhaFormatada(3, "WiFi: Desconectado  ");
-      }
-    } else {
-      printLinhaFormatada(3, " MakerSpace UNIFEI  ");
-    }
+    topStr = "1o: " + nome;
   }
+  printLinhaFormatada(0, topStr);
+
+  // Linha 1: Quantidade Atual de Makitas
+  String qtdStr;
+  if (makitas >= 99000000000.0) {
+    qtdStr = "Makitas: 99B (META!)";
+  } else {
+    qtdStr = "Makitas: " + formatarNumero(makitas) + " MKT";
+  }
+  printLinhaFormatada(1, qtdStr);
+
+  // Linha 2: Produção Atual ou Feedback Visual de Corte
+  if (clickAtivo) {
+    printLinhaFormatada(2, ">> CORTE EFETUADO! <<");
+  } else {
+    String prodStr = "Prod: +" + formatarNumero(cachedMps) + "/s";
+    String clkStr = "(+" + formatarNumero(cachedClickPower) + ")";
+    int espaco = 20 - (int)prodStr.length();
+    if (espaco >= (int)clkStr.length() + 1) {
+      while ((int)prodStr.length() < 20 - (int)clkStr.length()) {
+        prodStr += " ";
+      }
+      prodStr += clkStr;
+    }
+    printLinhaFormatada(2, prodStr);
+  }
+
+  // Linha 3: Status Operacional (Ativo, Offline, Conectando, Sincroniz., Apagando..., Reset OK!)
+  printLinhaFormatada(3, "Status: " + statusAtual);
 }
 
 void recalculateStats() {
@@ -384,7 +293,6 @@ void handleClick() {
   makitas += gain;
   pendingPhysicalClicks++;
   ultimoClickVisual = millis();
-  frameAnimacao = (frameAnimacao + 1) % 4;
   precisaAtualizarLCD = true;
 }
 
@@ -512,8 +420,14 @@ bool hasPendingResetAck = false;
 // ===== SINCRONIZAÇÃO COM A NUVEM (ESP = RECEIVER, SERVIDOR = MASTER) =====
 void syncWithCloud() {
   if (WiFi.status() != WL_CONNECTED) {
+    statusAtual = "Offline";
+    precisaAtualizarLCD = true;
     return;
   }
+
+  statusAtual = "Sincroniz.";
+  precisaAtualizarLCD = true;
+  atualizarLCD();
 
   WiFiClientSecure client;
   client.setInsecure(); // Economia de RAM no ESP8266
@@ -539,10 +453,9 @@ void syncWithCloud() {
   reqDoc["uptime"] = (unsigned long)(millis() / 1000);
   reqDoc["freeHeap"] = ESP.getFreeHeap();
 
-  // Envia check de confirmação caso a ESP tenha limpado sua memória
+  // Envia check de confirmação (ACK) se a limpeza foi executada
   if (hasPendingResetAck) {
     reqDoc["resetAck"] = true;
-    reqDoc["resetId"] = lastProcessedResetId;
   }
 
   String reqBody;
@@ -551,11 +464,6 @@ void syncWithCloud() {
   int httpCode = http.POST(reqBody);
 
   if (httpCode == HTTP_CODE_OK) {
-    if (hasPendingResetAck) {
-      hasPendingResetAck = false;
-      Serial.println(F("[RESET] Check de confirmacao enviado com sucesso ao servidor!"));
-    }
-
     String responsePayload = http.getString();
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument doc;
@@ -565,13 +473,15 @@ void syncWithCloud() {
     DeserializationError err = deserializeJson(doc, responsePayload);
 
     if (!err) {
-      // 0. TRATAMENTO DA ORDEM DE RESET VINDA DO WEBSITE:
+      // 0. TRATAMENTO DA ORDEM DE RESET LATENTE VINDA DA NUVEM:
+      // A ordem permanece ativa no servidor até a ESP enviar o ACK
       bool resetOrder = doc["resetOrder"] | false;
-      long serverResetId = doc["resetId"] | 0;
 
-      if (resetOrder && (serverResetId > lastProcessedResetId || serverResetId == 0)) {
-        Serial.println(F("[RESET] Ordem de reset recebida do servidor!"));
-        lastProcessedResetId = serverResetId;
+      if (resetOrder) {
+        Serial.println(F("[RESET] Ordem de reset latente recebida do servidor!"));
+        statusAtual = "Apagando...";
+        precisaAtualizarLCD = true;
+        atualizarLCD();
 
         // Limpa todas as variáveis locais do jogo
         makitas = 0.0;
@@ -603,23 +513,25 @@ void syncWithCloud() {
         recalculateStats();
         saveLocalGameState();
 
-        // Feedback imediato no LCD
-        printLinhaFormatada(0, "====================");
-        printLinhaFormatada(1, "   MAKITA CLICKER   ");
-        printLinhaFormatada(2, " ** JOGO RESETADO **");
-        printLinhaFormatada(3, " Memoria Limpa: OK! ");
-        precisaAtualizarLCD = true;
-
-        // Ativa flag para enviar o check de confirmação
+        // Marca ACK pendente e notifica no LCD
         hasPendingResetAck = true;
+        statusAtual = "Reset OK!";
+        precisaAtualizarLCD = true;
+        atualizarLCD();
 
         http.end();
         client.stop();
 
-        // Envia o check de confirmação imediatamente para o servidor cessar a ordem
-        delay(200);
+        // Envia o ACK imediatamente de volta ao servidor para desativar a ordem latente
+        delay(150);
         syncWithCloud();
         return;
+      }
+
+      // Se a ordem de reset já foi desativada no servidor, o ACK foi recebido com sucesso!
+      if (!resetOrder && hasPendingResetAck) {
+        hasPendingResetAck = false;
+        Serial.println(F("[RESET] Confirmacao de reset (ACK) validada pela nuvem!"));
       }
 
       // 1. Saldo Monotônico: adota se o servidor estiver com saldo maior
@@ -672,7 +584,7 @@ void syncWithCloud() {
         if (permsObj["perm_onipotencia_maker"] | false) permOnipotenciaMaker = true;
       }
 
-      // 3. TELEMETRIA DO LÍDER DO RANKING (TOP PLAYER):
+      // 4. TELEMETRIA DO LÍDER DO RANKING (TOP PLAYER):
       if (doc["topPlayer"].is<JsonObject>()) {
         JsonObject topObj = doc["topPlayer"];
         const char* tName = topObj["name"] | "";
@@ -684,13 +596,22 @@ void syncWithCloud() {
 
       recalculateStats();
       saveLocalGameState();
+      statusAtual = "Ativo";
       precisaAtualizarLCD = true;
       Serial.printf("[CLOUD] Sync OK! Saldo: %.1f | MPS: %.1f\n", makitas, cachedMps);
     } else {
       Serial.printf("[CLOUD] Erro parse JSON: %s\n", err.c_str());
+      statusAtual = "Ativo";
+      precisaAtualizarLCD = true;
     }
   } else {
     Serial.printf("[CLOUD] Falha HTTP: %d\n", httpCode);
+    if (WiFi.status() == WL_CONNECTED) {
+      statusAtual = "Ativo";
+    } else {
+      statusAtual = "Offline";
+    }
+    precisaAtualizarLCD = true;
   }
 
   http.end();
@@ -698,10 +619,9 @@ void syncWithCloud() {
 }
 
 void checkOTA() {
-  Serial.println("[OTA] Verificando atualizacoes...");
-  if (lcd) {
-    printLinhaFormatada(3, "Checando OTA...");
-  }
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  Serial.println(F("[OTA] Verificando atualizacoes..."));
 
   WiFiClientSecure client;
   client.setInsecure();
@@ -728,7 +648,7 @@ void checkOTA() {
 #endif
   DeserializationError err = deserializeJson(doc, payload);
   if (err) {
-    Serial.println("[OTA] Erro parse version.json");
+    Serial.println(F("[OTA] Erro parse version.json"));
     return;
   }
 
@@ -740,21 +660,23 @@ void checkOTA() {
   if (remoteVersion > CURRENT_FIRMWARE_VER && strlen(fwUrl) > 0) {
     if (lcd) {
       lcd->clear();
+      for (int i = 0; i < 4; i++) prevLcdLines[i] = "";
       printLinhaFormatada(0, "====================");
-      printLinhaFormatada(1, "   ATUALIZANDO...   ");
+      printLinhaFormatada(1, "  ATUALIZANDO OTA   ");
       printLinhaFormatada(2, " v" + String(CURRENT_FIRMWARE_VER) + " -> v" + String(remoteVersion));
-      printLinhaFormatada(3, ">> BAIXANDO OTA...<<");
+      printLinhaFormatada(3, ">> BAIXANDO FW... <<");
     }
     client.stop();
-    Serial.println("[OTA] Atualizando Firmware...");
+    Serial.println(F("[OTA] Atualizando Firmware..."));
     ESPhttpUpdate.rebootOnUpdate(true);
     t_httpUpdate_return ret = ESPhttpUpdate.update(client, fwUrl);
     Serial.printf("[OTA] Falha no FW update: %s\n", ESPhttpUpdate.getLastErrorString().c_str());
 
     if (lcd) {
       printLinhaFormatada(1, "  FALHA NO OTA!     ");
-      printLinhaFormatada(3, "Reiniciando em 2s...");
-      delay(2000);
+      printLinhaFormatada(3, "Tentando depois...  ");
+      delay(1500);
+      for (int i = 0; i < 4; i++) prevLcdLines[i] = "";
     }
   }
 }
@@ -776,54 +698,50 @@ void setup() {
   lcd->backlight();
   lcd->clear();
 
-  // Registra caracteres customizados na memória CGRAM do display LCD
-  lcd->createChar(0, iconBlade0);
-  lcd->createChar(1, iconBlade1);
-  lcd->createChar(2, iconCoin);
-  lcd->createChar(3, iconBolt);
-  lcd->createChar(4, iconFactory);
-  lcd->createChar(5, iconSpark);
-  lcd->createChar(6, iconTrophy);
-
-  // Tela de Inicialização
+  // Tela de Inicialização com versão atual
   printLinhaFormatada(0, "====================");
   printLinhaFormatada(1, "   MAKITA CLICKER   ");
-  printLinhaFormatada(2, "  MakerSpace UNIFEI ");
-  String verLine = "Edicao 99B v" + String(CURRENT_FIRMWARE_VER);
-  int pad = max(0, (20 - (int)verLine.length()) / 2);
-  String centeredVer = "";
-  for (int p = 0; p < pad; p++) centeredVer += " ";
-  centeredVer += verLine;
-  printLinhaFormatada(3, centeredVer);
+  printLinhaFormatada(2, "    Versao: v" + String(CURRENT_FIRMWARE_VER));
+  printLinhaFormatada(3, "Iniciando sistema...");
 
   // Carrega save da flash LittleFS imediatamente
   loadLocalGameState();
   recalculateStats();
 
-  delay(1000);
+  delay(600);
 
-  printLinhaFormatada(3, "Conectando WiFi...");
+  // Tentativa inicial de conexão Wi-Fi
+  printLinhaFormatada(3, "Conectando WiFi...  ");
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
   WiFi.begin(ssid, password);
-  Serial.print("[WiFi] Conectando");
+  Serial.print(F("[WiFi] Conectando"));
   unsigned long wifiStart = millis();
-  while (WiFi.status() != WL_CONNECTED && (millis() - wifiStart < 10000)) {
-    delay(500);
+  while (WiFi.status() != WL_CONNECTED && (millis() - wifiStart < 7000)) {
+    delay(250);
     Serial.print(".");
   }
   Serial.println();
 
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.print("[WiFi] Conectado! IP: ");
+    wifiConectadoAnterior = true;
+    statusAtual = "Ativo";
+    Serial.print(F("[WiFi] Conectado! IP: "));
     Serial.println(WiFi.localIP());
-    printLinhaFormatada(3, "WiFi: Conectado!");
+    printLinhaFormatada(3, "WiFi: Conectado!    ");
+    delay(500);
     checkOTA();
+    syncWithCloud();
   } else {
-    Serial.println("[WiFi] Nao conectado (modo offline)");
-    printLinhaFormatada(3, "Modo Offline");
+    wifiConectadoAnterior = false;
+    statusAtual = "Offline";
+    Serial.println(F("[WiFi] Falha inicial. Entrando em Modo Offline (retry 20s)"));
+    printLinhaFormatada(3, "Modo Offline (20s)  ");
+    delay(600);
   }
 
-  // Sincronização inicial com o Cloudflare KV
-  syncWithCloud();
+  // Limpa buffer de linhas para desenhar a Tela Principal
+  for (int i = 0; i < 4; i++) prevLcdLines[i] = "";
   atualizarLCD();
 }
 
@@ -832,6 +750,40 @@ unsigned long lastCloudSync = 0;
 unsigned long lastLocalSave = 0;
 const unsigned long CLOUD_SYNC_INTERVAL_MS = 5000;  // Sincronização a cada 5 segundos
 const unsigned long LOCAL_SAVE_INTERVAL_MS = 15000; // Autosave na flash a cada 15 segundos
+
+void gerenciarWiFi() {
+  unsigned long now = millis();
+  wl_status_t wifiStatus = WiFi.status();
+
+  if (wifiStatus == WL_CONNECTED) {
+    if (!wifiConectadoAnterior) {
+      wifiConectadoAnterior = true;
+      Serial.print(F("[WiFi] Reconectado com sucesso! IP: "));
+      Serial.println(WiFi.localIP());
+      statusAtual = "Ativo";
+      precisaAtualizarLCD = true;
+      checkOTA();
+      syncWithCloud();
+    }
+  } else {
+    if (wifiConectadoAnterior) {
+      wifiConectadoAnterior = false;
+      Serial.println(F("[WiFi] Conexao perdida. Modo Offline ativo."));
+      statusAtual = "Offline";
+      precisaAtualizarLCD = true;
+    }
+
+    // Tentativa periódica infinita a cada 20 segundos
+    if (now - ultimoWifiRetry >= WIFI_RETRY_INTERVAL_MS) {
+      ultimoWifiRetry = now;
+      Serial.println(F("[WiFi] Tentando reconectar (retry 20s)..."));
+      statusAtual = "Conectando";
+      precisaAtualizarLCD = true;
+      WiFi.disconnect();
+      WiFi.begin(ssid, password);
+    }
+  }
+}
 
 void loop() {
   unsigned long now = millis();
@@ -854,42 +806,31 @@ void loop() {
     }
   }
 
-  // 3. Animação de rotação do disco e feedback visual de faíscas
-  if (now - ultimoTickAnimacao >= 400) {
-    ultimoTickAnimacao = now;
-    if (cachedMps > 0 || (now - ultimoClickVisual < duracaoFeedbackClick)) {
-      frameAnimacao = (frameAnimacao + 1) % 4;
-      precisaAtualizarLCD = true;
-    }
-  }
-
-  // 4. Rotação de informações da Linha 3 a cada 3.2s
-  if (now - ultimoTickInfo >= 3200) {
-    ultimoTickInfo = now;
-    modoInfoLinha3 = (modoInfoLinha3 + 1) % 7;
-    precisaAtualizarLCD = true;
-  }
-
-  // 5. Atualização não-bloqueante e cadenciada do Display LCD 20x4
+  // 3. Atualização não-bloqueante e cadenciada do Display LCD 20x4
   if (precisaAtualizarLCD && (now - ultimoUpdateLCD >= INTERVALO_UPDATE_LCD)) {
     precisaAtualizarLCD = false;
     ultimoUpdateLCD = now;
     atualizarLCD();
   }
 
-  // 6. Autosave na flash LittleFS a cada 15 segundos (proteção contra perda de energia)
+  // 4. Gerenciamento de Wi-Fi Não-Bloqueante (Retry Infinito a cada 20s)
+  gerenciarWiFi();
+
+  // 5. Autosave na flash LittleFS a cada 15 segundos (proteção contra perda de energia)
   if (now - lastLocalSave >= LOCAL_SAVE_INTERVAL_MS) {
     lastLocalSave = now;
     saveLocalGameState();
   }
 
-  // 7. Sincronização periódica com a Nuvem (Cloudflare Pages & KV) a cada 5 segundos
+  // 6. Sincronização periódica com a Nuvem (Cloudflare Pages & KV) a cada 5 segundos
   if (now - lastCloudSync >= CLOUD_SYNC_INTERVAL_MS) {
     lastCloudSync = now;
-    syncWithCloud();
+    if (WiFi.status() == WL_CONNECTED) {
+      syncWithCloud();
+    }
   }
 
-  // 8. Verificação periódica de OTA a cada 5 minutos (auto-update sem necessidade de reset)
+  // 7. Verificação periódica de OTA a cada 5 minutos
   static unsigned long lastOtaCheck = 0;
   if (now - lastOtaCheck >= 300000) {
     lastOtaCheck = now;

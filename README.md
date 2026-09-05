@@ -114,37 +114,38 @@ A placa **ESP8266 NodeMCU** é 100% autônoma e opera sem necessidade de qualque
 
 1. **Clock a 160 MHz:** A CPU roda em frequência máxima (`system_update_cpu_freq(160)`) para processar requisições HTTPS com TLS moderno e desenhar o LCD sem atrasos.
 2. **Botão Físico com Resposta de 0 ms:** Conectado ao pino **D5** (`INPUT_PULLUP`). Usa filtro de debounce por hardware/software de 25ms. O clique incrementa o saldo local na mesma fração de milissegundo, garantindo resposta tátil instantânea.
-3. **Display LCD 20×4 I2C Inteligente:**
-   - **Linha 0:** Título do jogo com animação do disco de serra giratório (alternando frames na memória CGRAM) e faíscas dinâmicas a cada clique.
-   - **Linha 1:** Ícone de moeda/troféu e Saldo formatado em notação compacta (`k`, `M`, `B`, `T`, `Qa`).
-   - **Linhas 2 e 3 (Exibição sem cortes do Site):** Como o domínio `makitaclicker.pages.dev` possui 23 caracteres, o firmware utiliza as Linhas 2 e 3 em conjunto (`Site: makitaclicker` e `      .pages.dev`), eliminando qualquer corte de texto.
-   - **Telas Rotativas:** A cada 3,2 segundos, a Linha 3 alterna entre 7 telas:
-     1. Endereço completo do Site
-     2. **Top Player Global:** Exibe o jogador líder do site (`Top: <nome> (<saldo>)`) recebido via nuvem
-     3. Progresso da Meta 99B (`Meta 99B: XX.XX%`)
-     4. Total de Oficinas construídas
-     5. Versão de Firmware (`FW: vXX (OTA Ativo)`)
-     6. Endereço IP Local (`IP: 192.168.x.x`)
-     7. MakerSpace UNIFEI
-   - **Double-Buffering:** Só retransmite para o barramento I2C caracteres de linhas que realmente mudaram, eliminando qualquer cintilação (*flicker*).
-4. **Persistência na Memória Flash (LittleFS):** O estado é salvo no arquivo `/gamestate.json` a cada 15 segundos ou antes de reiniciar. Se faltar energia, o saldo não se perde.
-5. **Telemetria Contínua:** A cada 5 segundos, a ESP envia à nuvem seu endereço IP, versão de firmware instalada, RSSI de Wi-Fi, Uptime e RAM livre, e recebe os dados globais do líder da partida (`topPlayer`).
+3. **Display LCD 20×4 I2C Redesenhado & Elegante:**
+   - **Tela de Boot:** Exibe o título do jogo, MakerSpace UNIFEI e a versão atual instalada (`Versao: vXX`) com status de inicialização.
+   - **Tela de OTA Dedicada:** Durante a atualização Over-The-Air, o LCD exibe uma tela exclusiva com as versões (`vLocal -> vRemota`) e status do download.
+   - **Tela Principal (4 Linhas Transparentes e Diretas):**
+     - **Linha 0 (1° Lugar / Nome):** Líder global atual do ranking com saldo (`1o: <Nome> (<Saldo>)`).
+     - **Linha 1 (Qtd Atual):** Saldo de Makitas acumuladas no console (`Makitas: 125.4k MKT`).
+     - **Linha 2 (Produção / Corte):** Taxa passiva e ganho por clique (`Prod: +15.0/s (+1.0)`), alternando instantaneamente para `>> CORTE EFETUADO! <<` ao pressionar o botão.
+     - **Linha 3 (Status Operacional ao Vivo):** Indica o estado exato da máquina: `Status: Ativo`, `Status: Offline`, `Status: Conectando`, `Status: Sincroniz.`, `Status: Apagando...` ou `Status: Reset OK!`.
+   - **Double-Buffering Completo (4 Linhas):** Só envia ao barramento I2C caracteres de linhas que de fato mudaram, eliminando qualquer cintilação (*flicker*).
+4. **Reconexão Wi-Fi Não-Bloqueante (Retry Infinito a cada 20s):**
+   - Na inicialização, a ESP tenta conectar por no máximo 7 segundos. Se não conseguir, entra imediatamente em jogo no modo offline para latência zero no clique mecânico.
+   - A cada 20 segundos, de forma totalmente assíncrona, tenta reconectar ao Wi-Fi sem travar o loop principal nem a leitura do botão mecânico.
+5. **Persistência na Memória Flash (LittleFS):** O estado é salvo no arquivo `/gamestate.json` a cada 15 segundos ou antes de reiniciar. Se faltar energia, o saldo não se perde.
+6. **Telemetria Contínua:** A cada 5 segundos, a ESP envia à nuvem seu endereço IP, versão de firmware instalada, RSSI de Wi-Fi, Uptime e RAM livre, e recebe os dados globais do líder da partida (`topPlayer`).
 
 ---
 
-## 🤝 Handshake de Reset e Consistência Eventual no KV
+## 🤝 Handshake de Reset Latente e Consistência Eventual no KV
 
 Para evitar que o progresso seja restaurado acidentalmente no site por nós CDN da Cloudflare com propagação defasada (*eventual consistency*) ou enquanto a ESP8266 mantém um saldo antigo offline:
 
-1. **Geração e Validação de `resetEpoch`:**
-   - Ao resetar o progresso de um perfil ou efetuar limpeza global, o sistema grava uma nova marca temporal `resetEpoch = Date.now()`.
-   - Qualquer tentativa de salvamento (`save_user_state`) contendo um `resetEpoch` inferior ao registrado na nuvem é automaticamente rejeitada como escrita defasada (*stale write*). Isso impede categoricamente que abas antigas ou nós desincronizados restaurem dados antigos.
-2. **Isolamento de Saves vs. Hardware Global:**
+1. **Ordens de Reset Latentes no Cloudflare KV:**
+   - Quando um reset global é emitido (no jogo ou no Painel Admin), a flag `resetPendingEsp: true` é gravada no KV com um `resetId`.
+   - **A ordem é 100% latente:** ela **nunca desaparece** do servidor enquanto a ESP8266 física não responder com `resetAck: true`.
+   - Enquanto o ACK não for recebido, o servidor rejeita sumariamente qualquer saldo, clique ou compra residual antiga enviada pela ESP.
+2. **Execução e Confirmação no Hardware (ESP8266):**
+   - Ao receber `resetOrder: true`, a ESP8266 atualiza o display para `Status: Apagando...`, zera a memória RAM, formata `/gamestate.json` no LittleFS, exibe `Status: Reset OK!` e envia imediatamente uma sincronização contendo `resetAck: true`.
+   - Apenas ao processar esse ACK, o servidor desliga a flag de pendência (`resetPendingEsp = false`) e o LCD retorna para `Status: Ativo`.
+3. **Geração e Validação de `resetEpoch` (Perfis Web):**
+   - Ao resetar perfis web, o sistema grava uma nova marca temporal `resetEpoch = Date.now()`. Qualquer pacote de salvamento defasado de nós de borda é descartado como *stale write*.
+4. **Isolamento de Saves vs. Hardware Global:**
    - O saldo de jogadores individuais nunca é sobrescrito por valores acumulados na memória da ESP8266 física (`gamestate`).
-3. **Handshake Bidirecional com a ESP8266:**
-   - Quando o comando de reset global é emitido, a nuvem ativa `resetPendingEsp: true` com um `resetId` incrementado.
-   - Ao receber `resetOrder: true`, a ESP8266 zera a RAM, limpa o arquivo `/gamestate.json` no LittleFS, notifica no LCD e responde `resetAck: true`.
-   - Apenas com a confirmação `resetAck: true`, a flag de pendência é desativada.
 
 ---
 
