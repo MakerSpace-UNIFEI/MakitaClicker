@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Painel Administrativo — MakitaClicker</title>
+    <link rel="icon" type="image/png" href="/makitaCoracao.png">
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        .admin-wrapper {
+            max-width: 1100px;
+            margin: 2rem auto;
+            padding: 0 1.5rem;
+        }
+        .admin-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid var(--panel-edge);
+            padding-bottom: 1.2rem;
+            margin-bottom: 2rem;
+        }
+        .admin-title {
+            font-size: 1.6rem;
+            font-weight: 800;
+            color: var(--orange);
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+        }
+        .admin-back-btn {
+            background: #222;
+            border: 1px solid var(--panel-edge);
+            color: var(--text-hi);
+            padding: 0.6rem 1.1rem;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+        .admin-back-btn:hover {
+            border-color: var(--orange);
+            color: var(--orange);
+        }
+        /* Login Card */
+        .admin-login-card {
+            background: var(--panel);
+            border: 1px solid var(--panel-edge);
+            border-radius: 10px;
+            max-width: 440px;
+            margin: 4rem auto;
+            padding: 2.5rem;
+            box-shadow: 0 12px 30px rgba(0,0,0,0.5);
+            text-align: center;
+        }
+        .admin-login-title {
+            font-size: 1.3rem;
+            margin-bottom: 0.5rem;
+            color: var(--text-hi);
+        }
+        .admin-login-sub {
+            font-size: 0.85rem;
+            color: var(--text-lo);
+            margin-bottom: 1.8rem;
+        }
+        .admin-input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.8rem;
+            margin-bottom: 1.2rem;
+        }
+        .admin-input {
+            width: 100%;
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 6px;
+            padding: 0.85rem 1rem;
+            color: #fff;
+            font-size: 1rem;
+            font-family: var(--mono);
+            box-sizing: border-box;
+            outline: none;
+        }
+        .admin-input:focus {
+            border-color: var(--orange);
+        }
+        .admin-btn-primary {
+            width: 100%;
+            background: var(--orange);
+            color: #111;
+            border: none;
+            padding: 0.85rem;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .admin-btn-primary:hover {
+            opacity: 0.9;
+        }
+        .admin-error-msg {
+            color: #ff5252;
+            font-size: 0.85rem;
+            margin-top: 0.8rem;
+            min-height: 1.2rem;
+        }
+        /* Admin Dashboard */
+        .admin-dashboard {
+            display: none;
+        }
+        .admin-stats-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        .admin-actions-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.2rem;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+        .admin-table-wrapper {
+            background: var(--panel);
+            border: 1px solid var(--panel-edge);
+            border-radius: 8px;
+            overflow-x: auto;
+            margin-bottom: 2.5rem;
+        }
+        .admin-table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+            font-size: 0.9rem;
+        }
+        .admin-table th {
+            background: #191c1f;
+            color: var(--text-faint);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 1rem;
+            border-bottom: 1px solid var(--panel-edge);
+        }
+        .admin-table td {
+            padding: 1rem;
+            border-bottom: 1px solid #222;
+            color: var(--text-hi);
+        }
+        .admin-table tr:last-child td {
+            border-bottom: none;
+        }
+        .admin-table tr:hover td {
+            background: rgba(255,255,255,0.02);
+        }
+        .admin-del-btn {
+            background: #8a1f1f;
+            border: 1px solid #b71c1c;
+            color: #fff;
+            padding: 0.4rem 0.8rem;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+        .admin-del-btn:hover {
+            background: #c62828;
+        }
+        .admin-danger-btn {
+            background: #5c1818;
+            border: 1px solid #d32f2f;
+            color: #ff8a80;
+            padding: 0.6rem 1.2rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 700;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+        .admin-danger-btn:hover {
+            background: #b71c1c;
+            color: #fff;
+        }
+    </style>
+</head>
+<body>
+    <div class="admin-wrapper">
+        <header class="admin-header">
+            <div class="admin-title">
+                <span>🔐</span>
+                <span>MakitaClicker Admin</span>
+            </div>
+            <a href="/" class="admin-back-btn">⬅ Voltar ao Jogo</a>
+        </header>
+
+        <!-- Tela de Autenticação -->
+        <div id="adminLoginView" class="admin-login-card">
+            <h2 class="admin-login-title">Acesso Restrito</h2>
+            <p class="admin-login-sub">Informe a senha administrativa para gerenciar os perfis salvos no Cloudflare KV.</p>
+            <form id="adminLoginForm">
+                <div class="admin-input-group">
+                    <input type="password" id="adminPasswordInput" class="admin-input" placeholder="Senha do Administrador" autocomplete="current-password" required>
+                    <button type="submit" id="btnAdminLogin" class="admin-btn-primary">Entrar no Painel</button>
+                </div>
+                <div id="adminLoginError" class="admin-error-msg"></div>
+            </form>
+        </div>
+
+        <!-- Dashboard Administrativo (Liberado após Login) -->
+        <div id="adminDashboardView" class="admin-dashboard">
+            <!-- Métricas Gerais -->
+            <div class="admin-stats-row">
+                <div class="stat-card">
+                    <div class="stat-card__label">Total de Perfis Registrados</div>
+                    <div class="stat-card__val" id="adminTotalUsers">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card__label">Líder Global (Top Player)</div>
+                    <div class="stat-card__val stat-val--text" id="adminTopPlayer">—</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card__label">Banco de Dados (KV)</div>
+                    <div class="stat-card__val stat-val--small" id="adminKvStatus">Conectado</div>
+                </div>
+            </div>
+
+            <!-- Barra de Ações -->
+            <div class="admin-actions-bar">
+                <div style="display: flex; gap: 0.8rem;">
+                    <button id="btnAdminRefresh" class="admin-back-btn" style="cursor: pointer;">🔄 Atualizar Lista</button>
+                </div>
+                <button id="btnAdminDeleteAll" class="admin-danger-btn">⚠️ Apagar TODOS os Perfis</button>
+            </div>
+
+            <!-- Tabela de Perfis -->
+            <div class="admin-table-wrapper">
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 50px;">Pos</th>
+                            <th>Apelido</th>
+                            <th>ID do Perfil</th>
+                            <th>Makitas Atuais</th>
+                            <th>Total Produzido</th>
+                            <th>Criado Em</th>
+                            <th>Último Save</th>
+                            <th style="text-align: right;">Ação</th>
+                        </tr>
+                    </thead>
+                    <tbody id="adminUsersTableBody">
+                        <tr>
+                            <td colspan="8" style="text-align: center; color: var(--text-lo); padding: 2rem;">Carregando usuários...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Seção de Reset de Hardware / Global -->
+            <div class="stat-card" style="border-color: #552222; margin-top: 2rem;">
+                <h3 style="margin-top: 0; color: #ff8a80; font-size: 1.1rem;">Controle Global de Hardware (ESP8266)</h3>
+                <p style="font-size: 0.85rem; color: var(--text-lo); margin-bottom: 1.2rem;">
+                    O botão abaixo reinicia o estado mestre global da partida (`gamestate`) e emite a ordem de reset para a memória física do microcontrolador ESP8266.
+                </p>
+                <button id="btnAdminResetGlobal" class="admin-danger-btn">⚠️ Emitir Ordem de Reset Global para ESP8266</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="/admin.js"></script>
+</body>
+</html>

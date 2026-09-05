@@ -13,8 +13,10 @@ Documentação técnica da interface web e da API serverless do **MakitaClicker*
 ```
 web/
 ├── index.html       # Marcação semântica, layout em 3 colunas e abas de navegação
+├── admin.html       # Painel administrativo protegido para gerenciamento de perfis
+├── admin.js         # Lógica do painel admin, criptografia SHA-256 e chamadas de API
 ├── style.css        # Sistema de design centralizado, variáveis CSS e responsividade
-├── game.js          # Motor a 60 FPS, árvore de habilidades, reconciliação e telemetria
+├── game.js          # Motor fluido, árvore de habilidades, reconciliação e telemetria
 ├── images/          # Sprites e ícones das ferramentas e melhorias
 └── makitaCoracao.png# Logo oficial
 ```
@@ -102,15 +104,32 @@ Para manter o tráfego minúsculo e respeitar a cota diária gratuita do Cloudfl
   "makitas": 1250000.5,
   "totalAccumulated": 3500000.0,
   "upgrades": [15, 10, 5, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  "perms": [0, 1, 2, 4]
+  "perms": [0, 1, 2, 4],
+  "resetEpoch": 1741146000000
 }
 ```
 
 ### Ações Suportadas (`POST`):
 - `action: "create_user"`: Cria instantaneamente um perfil no KV (`users:list` e `user:<id>:state`).
-- `action: "save_user_state"`: Salva o progresso compactado do jogador no KV.
+- `action: "save_user_state"`: Salva o progresso compactado do jogador no KV (valida `resetEpoch` para evitar ressurreição por consistência eventual).
+- `action: "reset_user_state"`: Zera o perfil no KV, gera novo `resetEpoch` e recalcula `topPlayer`.
 - `action: "sync"`: Utilizado pela ESP8266 para enviar telemetria, receber o estado global e dados do `topPlayer`.
-- `action: "reset"`: Dispara handshake de limpeza global.
+- `action: "reset"`: Dispara handshake de limpeza global do hardware.
+- `action: "admin_verify"`: Valida o hash SHA-256 da senha administrativa (`ADMMAKER`).
+- `action: "admin_delete_user"`: Remove um perfil específico do KV e atualiza a lista de usuários.
+- `action: "admin_delete_all_users"`: Remove todos os perfis cadastrados no KV.
+
+---
+
+## 🔒 Painel Administrativo (`/admin.html`)
+
+Interface dedicada para gestão de perfis e manutenção do servidor:
+- **Autenticação:** Protegida criptograficamente no cliente e no servidor por hash SHA-256 (`ADMMAKER`), sem trafegar senhas em texto puro.
+- **Funcionalidades:**
+  - Listagem completa de jogadores cadastrados com data de criação e saldo atual.
+  - Exclusão individual de perfis do Cloudflare KV.
+  - Exclusão em massa de todos os perfis com confirmação em duas etapas.
+  - Reset forçado do estado global e telemetria do console físico.
 
 ---
 

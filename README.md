@@ -52,8 +52,10 @@ MakitaClicker/
 │
 ├── web/                           # 🌐 Frontend Web (HTML5, CSS3, ES6+)
 │   ├── index.html                 # Estrutura semântica e abas de navegação
+│   ├── admin.html                 # Painel administrativo protegido por senha SHA-256
+│   ├── admin.js                   # Lógica e autenticação da interface administrativa
 │   ├── style.css                  # Folha de estilo centralizada (tema escuro industrial)
-│   ├── game.js                    # Motor de jogo 60 FPS, render throttled e telemetria
+│   ├── game.js                    # Motor fluido na taxa nativa, perfis e telemetria
 │   ├── images/                    # Sprites, favicons e ícones
 │   └── README.md                  # Documentação detalhada da Web
 │
@@ -130,19 +132,31 @@ A placa **ESP8266 NodeMCU** é 100% autônoma e opera sem necessidade de qualque
 
 ---
 
-## 🤝 Handshake de Reset Bidirecional
+## 🤝 Handshake de Reset e Consistência Eventual no KV
 
-Para evitar que o progresso seja resetado acidentalmente no site enquanto a ESP8266 mantém um saldo antigo offline (o que geraria ressurgimento do save):
+Para evitar que o progresso seja restaurado acidentalmente no site por nós CDN da Cloudflare com propagação defasada (*eventual consistency*) ou enquanto a ESP8266 mantém um saldo antigo offline:
 
-1. Quando o jogador clica em **"⚠️ Resetar Todo o Progresso"** no site:
-   - O Cloudflare KV zera o saldo e as melhorias e ativa a flag `resetPendingEsp: true` com um `resetId` incrementado.
-2. A nuvem **continua emitindo a ordem de reset** em todas as respostas de sincronização para a ESP8266.
-3. Ao receber `resetOrder: true`, a ESP8266:
-   - Zera seu saldo e oficinas em RAM.
-   - Apaga o arquivo `/gamestate.json` no LittleFS.
-   - Exibe a mensagem de reset no LCD 20×4.
-   - No próximo ciclo de sincronização, envia a confirmação `resetAck: true`.
-4. Apenas quando a nuvem recebe o `resetAck: true` da ESP, a flag `resetPendingEsp` é desativada, encerrando o ciclo com segurança absoluta.
+1. **Geração e Validação de `resetEpoch`:**
+   - Ao resetar o progresso de um perfil ou efetuar limpeza global, o sistema grava uma nova marca temporal `resetEpoch = Date.now()`.
+   - Qualquer tentativa de salvamento (`save_user_state`) contendo um `resetEpoch` inferior ao registrado na nuvem é automaticamente rejeitada como escrita defasada (*stale write*). Isso impede categoricamente que abas antigas ou nós desincronizados restaurem dados antigos.
+2. **Isolamento de Saves vs. Hardware Global:**
+   - O saldo de jogadores individuais nunca é sobrescrito por valores acumulados na memória da ESP8266 física (`gamestate`).
+3. **Handshake Bidirecional com a ESP8266:**
+   - Quando o comando de reset global é emitido, a nuvem ativa `resetPendingEsp: true` com um `resetId` incrementado.
+   - Ao receber `resetOrder: true`, a ESP8266 zera a RAM, limpa o arquivo `/gamestate.json` no LittleFS, notifica no LCD e responde `resetAck: true`.
+   - Apenas com a confirmação `resetAck: true`, a flag de pendência é desativada.
+
+---
+
+## 🔒 Painel Administrativo (`/admin.html`)
+
+Acesse em: `https://makitaclicker.pages.dev/admin.html`
+
+O painel administrativo permite gerenciar a base de dados de jogadores e o hardware sem expor endpoints desprotegidos:
+- **Autenticação Criptográfica (SHA-256):** A senha `ADMMAKER` é convertida em hash SHA-256 (`c9a2abd67ad59717195e5d8a6f917ba5084d81af244b0a8d40c8b30f234742d7`) diretamente pelo navegador via `crypto.subtle.digest`. O servidor confere apenas o hash, impedindo o tráfego ou armazenamento de senhas em texto puro.
+- **Gerenciamento de Perfis:** Exibe tabela completa de perfis salvos no KV com ID, apelido, data de cadastro e progresso de Makitas.
+- **Exclusão Segura:** Permite remover jogadores individualmente (com recálculo dinâmico do `topPlayer` líder) ou apagar toda a base de perfis com confirmação de segurança.
+- **Reset do Console Físico:** Dispara a reinicialização de fábrica da telemetria e do progresso do hardware embarcado.
 
 ---
 

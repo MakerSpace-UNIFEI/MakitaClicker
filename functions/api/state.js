@@ -7,6 +7,8 @@
 const KV_KEY = 'gamestate';
 const USERS_LIST_KEY = 'users:list';
 const MAX_OWNED = 100;
+// Hash SHA-256 criptográfico de 'ADMMAKER' para autenticação segura e irreversível no painel administrativo
+const ADMIN_AUTH_HASH = 'c9a2abd67ad59717195e5d8a6f917ba5084d81af244b0a8d40c8b30f234742d7';
 
 // Configuração das 24 oficinas (idêntico ao ESP e Web)
 const UPGRADES = [
@@ -187,6 +189,7 @@ function compactUserState(state) {
     totalMakitasMade: typeof state.totalMakitasMade === 'number' ? state.totalMakitasMade : (state.makitas || 0),
     upgrades: upgradesArr,
     perms: permsArr,
+    resetEpoch: state.resetEpoch || 0,
     lastUpdate: state.lastUpdate || Date.now(),
     lastSavedAt: Date.now()
   };
@@ -232,6 +235,7 @@ function expandUserState(raw) {
     totalMakitasMade,
     owned,
     perms,
+    resetEpoch: raw.resetEpoch || 0,
     lastUpdate: raw.lastUpdate || Date.now(),
     lastSavedAt: raw.lastSavedAt || Date.now()
   };
@@ -366,6 +370,19 @@ async function saveUserState(env, userId, state) {
     }
   }
   memoryFallbackUserStates[userId] = state;
+}
+
+async function deleteUserState(env, userId) {
+  const { kv } = getKV(env);
+  const key = getUserStateKey(userId);
+  if (kv) {
+    try {
+      await kv.delete(key);
+    } catch (err) {
+      console.error(`[KV] Erro ao deletar estado do usuário ${userId}:`, err);
+    }
+  }
+  delete memoryFallbackUserStates[userId];
 }
 
 async function loadState(env) {
@@ -534,6 +551,26 @@ export async function onRequestPost(context) {
 
     const now = Date.now();
     const statePayload = body.state || body;
+
+    // Proteção contra consistência eventual / ressurreição pós-reset:
+    // Se o estado já salvo no servidor possui um resetEpoch mais recente que o payload enviado,
+    // significa que este payload veio de uma requisição/aba anterior ao reset. Rejeitamos para não ressuscitar!
+    const { state: currentState } = await loadUserState(env, userId);
+    if (currentState && currentState.resetEpoch && (!statePayload.resetEpoch || statePayload.resetEpoch < currentState.resetEpoch)) {
+      return new Response(JSON.stringify({
+        success: true,
+        staleRejected: true,
+        state: currentState,
+        topPlayer,
+        _kv_connected: kvConnected,
+        _kv_binding: kvName || 'NONE',
+        _kv_diag: 'Save defasado descartado pelo servidor para evitar ressurreição de dados.'
+      }), {
+        status: 200,
+        headers: CORS_HEADERS
+      });
+    }
+
     const expanded = expandUserState(statePayload);
 
     if (typeof statePayload.makitas === 'number') {
@@ -544,6 +581,9 @@ export async function onRequestPost(context) {
     }
     expanded.lastSavedAt = now;
     expanded.lastUpdate = now;
+    if (currentState && currentState.resetEpoch) {
+      expanded.resetEpoch = currentState.resetEpoch;
+    }
 
     await saveUserState(env, userId, expanded);
 
@@ -561,6 +601,136 @@ export async function onRequestPost(context) {
       success: true,
       lastSavedAt: now,
       state: expanded,
+      topPlayer,
+      _kv_connected: kvConnected,
+      _kv_binding: kvName || 'NONE',
+      _kv_diag: diag
+    }), {
+      status: 200,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // -------------------------------------------------------------
+  // AÇÃO 3: RESETAR ESTADO DE UM PERFIL ESPECÍFICO
+  // -------------------------------------------------------------
+  if (action === 'reset_user_state') {
+    const userId = body.userId;
+    if (!userId) {
+      return new Response(JSON.stringify({ error: 'userId obrigatório' }), {
+        status: 400,
+        headers: CORS_HEADERS
+      });
+    }
+
+    const now = Date.now();
+    const freshState = getDefaultState();
+    freshState.lastSavedAt = now;
+    freshState.lastUpdate = now;
+    freshState.resetEpoch = now; // Marca temporal de reset absoluto
+
+    await saveUserState(env, userId, freshState);
+
+    const userIndex = usersList.findIndex(u => u.id === userId);
+    if (userIndex >= 0) {
+      usersList[userIndex].makitas = 0;
+      usersList[userIndex].totalMakitasMade = 0;
+      usersList[userIndex].lastSavedAt = now;
+      await saveUsersList(env, usersList);
+    }
+    topPlayer = getTopPlayer(usersList);
+
+    return new Response(JSON.stringify({
+      success: true,
+      isReset: true,
+      state: freshState,
+      topPlayer,
+      _kv_connected: kvConnected,
+      _kv_binding: kvName || 'NONE',
+      _kv_diag: diag
+    }), {
+      status: 200,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // -------------------------------------------------------------
+  // AÇÕES ADMINISTRATIVAS (Protegidas por Hash Criptográfico SHA-256)
+  // -------------------------------------------------------------
+  if (action === 'admin_verify') {
+    const authHash = String(body.authHash || '').trim().toLowerCase();
+    if (authHash !== ADMIN_AUTH_HASH) {
+      return new Response(JSON.stringify({ success: false, error: 'Senha administrativa incorreta.' }), {
+        status: 401,
+        headers: CORS_HEADERS
+      });
+    }
+    return new Response(JSON.stringify({
+      success: true,
+      users: usersList,
+      topPlayer,
+      _kv_connected: kvConnected,
+      _kv_binding: kvName || 'NONE',
+      _kv_diag: diag
+    }), {
+      status: 200,
+      headers: CORS_HEADERS
+    });
+  }
+
+  if (action === 'admin_delete_user') {
+    const authHash = String(body.authHash || '').trim().toLowerCase();
+    if (authHash !== ADMIN_AUTH_HASH) {
+      return new Response(JSON.stringify({ success: false, error: 'Não autorizado.' }), {
+        status: 401,
+        headers: CORS_HEADERS
+      });
+    }
+    const userId = body.userId;
+    if (!userId) {
+      return new Response(JSON.stringify({ error: 'userId obrigatório' }), {
+        status: 400,
+        headers: CORS_HEADERS
+      });
+    }
+
+    await deleteUserState(env, userId);
+    const updatedUsers = usersList.filter(u => u.id !== userId);
+    await saveUsersList(env, updatedUsers);
+    topPlayer = getTopPlayer(updatedUsers);
+
+    return new Response(JSON.stringify({
+      success: true,
+      deletedUserId: userId,
+      users: updatedUsers,
+      topPlayer,
+      _kv_connected: kvConnected,
+      _kv_binding: kvName || 'NONE',
+      _kv_diag: diag
+    }), {
+      status: 200,
+      headers: CORS_HEADERS
+    });
+  }
+
+  if (action === 'admin_delete_all_users') {
+    const authHash = String(body.authHash || '').trim().toLowerCase();
+    if (authHash !== ADMIN_AUTH_HASH) {
+      return new Response(JSON.stringify({ success: false, error: 'Não autorizado.' }), {
+        status: 401,
+        headers: CORS_HEADERS
+      });
+    }
+
+    for (const u of usersList) {
+      await deleteUserState(env, u.id);
+    }
+    await saveUsersList(env, []);
+    topPlayer = { name: 'MakerSpace', makitas: 0, totalMakitasMade: 0 };
+
+    return new Response(JSON.stringify({
+      success: true,
+      users: [],
       topPlayer,
       _kv_connected: kvConnected,
       _kv_binding: kvName || 'NONE',

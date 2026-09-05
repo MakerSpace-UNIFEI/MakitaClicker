@@ -28,8 +28,14 @@ O projeto é um jogo incremental (Cookie Clicker) **híbrido** (Físico + Web).
 - **Serialização Compacta:** Para otimizar armazenamento e cota de rede no KV, os upgrades e melhorias permanentes são compactados em vetores indexados:
   - `upgrades`: Array denso de 24 inteiros `[q0, q1, ..., q23]`.
   - `perms`: Array esparso contendo os índices numéricos das habilidades desbloqueadas `[0, 1, 4]`.
+  - `resetEpoch`: Timestamp de época do último reset, utilizado para anular saves defasados de nós CDN com consistência eventual.
 - **Top Player / Leaderboard:** O backend calcula automaticamente o jogador com maior saldo de Makitas (`topPlayer: { name, makitas }`) e o injeta nas respostas para o frontend e para o firmware da ESP8266.
-- **Regra de Ouro (CRDT Ratchet):** O saldo nunca retrocede por atualizações, ele sempre soma os deltas pendentes. O nível de uma melhoria é sempre o `Math.max` entre o servidor e o cliente. Se for retirar saldo (compra de item), essa operação deve ser atômica e autorizada.
+- **Regra de Ouro (Isolamento de Saves vs. Hardware Global):** 
+  - Perfis de usuário não herdam nem sofrem `Math.max` com o saldo da ESP física (`gamestate`).
+  - O salvamento de usuário só é aceito se o `resetEpoch` do payload for `>=` ao `resetEpoch` gravado no KV, eliminando a ressurreição de saves zumbis decorrentes da consistência eventual da Cloudflare.
+- **Painel Administrativo (`/admin.html`):**
+  - Rota protegida por hash SHA-256 da senha `ADMMAKER` (`c9a2abd67ad59717195e5d8a6f917ba5084d81af244b0a8d40c8b30f234742d7`).
+  - Permite verificar credenciais (`admin_verify`), deletar perfil individual (`admin_delete_user`), deletar todos os perfis (`admin_delete_all_users`) e forçar reset global de hardware (`admin_reset_hardware`).
 - O Cloudflare KV tem limite de gravações gratuitas (1.000 writes/dia). O backend utiliza cache e o frontend controla a periodicidade de salvamento do estado do usuário.
 
 ### Firmware (C++ ESP8266)

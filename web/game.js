@@ -967,17 +967,27 @@ function resetAllProgress(sendToServer = true) {
     permanentUpgrades.forEach(u => { u.purchased = false; });
     serverClickPower = 1.0;
     isDirty = true;
-    hasUnsavedChanges = true;
+    hasUnsavedChanges = false;
+    lastCloudSaveTime = Date.now();
 
     saveLocalState();
 
     if (sendToServer && currentUserId) {
-        saveUserProgressToCloud(true);
+        fetch('/api/state', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'reset_user_state', userId: currentUserId })
+        }).then(res => res.json()).then(data => {
+            if (data.topPlayer) latestTopPlayer = data.topPlayer;
+            updateSaveIndicator();
+            renderStats();
+        }).catch(err => console.warn('Erro ao resetar perfil no servidor:', err));
     } else if (sendToServer) {
         syncWithCloud({ action: 'reset' });
     }
 
     renderUI();
+    renderStats();
 }
 
 // ---------- COMUNICAÇÃO HTTP COM CLOUDFLARE PAGES & KV ----------
@@ -992,40 +1002,43 @@ function applyServerState(data) {
     }
 
     // Reconciliação Monotônica (Ratchet / CRDT):
-    // 1. Saldo e Total: O saldo local só é atualizado se a soma do servidor for estritamente MAIOR que o local
-    if (typeof data.makitas === 'number') {
-        const localPendingClicksGain = pendingClicks * calculateLocalClickPower();
-        const serverEffective = data.makitas + localPendingClicksGain;
-        if (serverEffective > makitas) {
-            makitas = serverEffective;
-        }
-        if (typeof data.totalMakitasMade === 'number') {
-            totalMakitasMade = Math.max(totalMakitasMade, data.totalMakitasMade);
-        }
-    }
-
-    // 2. Upgrades da loja: NUNCA perde upgrades. Mantém sempre o maior valor entre local e servidor.
-    if (data.owned && typeof data.owned === 'object') {
-        upgrades.forEach(upgrade => {
-            if (typeof data.owned[upgrade.id] === 'number') {
-                owned[upgrade.id] = Math.max(owned[upgrade.id] || 0, data.owned[upgrade.id]);
+    // Se o usuário está logado em um perfil, suas makitas/upgrades pertencem EXCLUSIVAMENTE ao seu perfil!
+    // NÃO adotar o saldo global da ESP8266 física!
+    if (!currentUserId) {
+        if (typeof data.makitas === 'number') {
+            const localPendingClicksGain = pendingClicks * calculateLocalClickPower();
+            const serverEffective = data.makitas + localPendingClicksGain;
+            if (serverEffective > makitas) {
+                makitas = serverEffective;
             }
-        });
-    }
-
-    // 3. Tecnologias permanentes: Se foi desbloqueada no servidor, ativa localmente
-    if (data.perms && typeof data.perms === 'object') {
-        permanentUpgrades.forEach(u => {
-            if (u.id in data.perms && data.perms[u.id] === true) {
-                u.purchased = true;
+            if (typeof data.totalMakitasMade === 'number') {
+                totalMakitasMade = Math.max(totalMakitasMade, data.totalMakitasMade);
             }
-        });
-    }
+        }
 
-    // MPS: usa o oficial do servidor se > 0, senão calcula localmente
-    const serverMps = typeof data.mps === 'number' ? data.mps : 0;
-    mps = serverMps > 0 ? serverMps : calculateLocalMps();
-    serverClickPower = calculateLocalClickPower();
+        // 2. Upgrades da loja: NUNCA perde upgrades. Mantém sempre o maior valor entre local e servidor.
+        if (data.owned && typeof data.owned === 'object') {
+            upgrades.forEach(upgrade => {
+                if (typeof data.owned[upgrade.id] === 'number') {
+                    owned[upgrade.id] = Math.max(owned[upgrade.id] || 0, data.owned[upgrade.id]);
+                }
+            });
+        }
+
+        // 3. Tecnologias permanentes: Se foi desbloqueada no servidor, ativa localmente
+        if (data.perms && typeof data.perms === 'object') {
+            permanentUpgrades.forEach(u => {
+                if (u.id in data.perms && data.perms[u.id] === true) {
+                    u.purchased = true;
+                }
+            });
+        }
+
+        // MPS: usa o oficial do servidor se > 0, senão calcula localmente
+        const serverMps = typeof data.mps === 'number' ? data.mps : 0;
+        mps = serverMps > 0 ? serverMps : calculateLocalMps();
+        serverClickPower = calculateLocalClickPower();
+    }
 
     // Feedback de status da ordem de reset para a ESP
     if (data.resetPendingEsp === true) {
